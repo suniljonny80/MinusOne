@@ -45,8 +45,8 @@ function Get-TorchBuild {
   if ($code -ne 0 -or -not $v) { return 'none' }
   return ("$v" -split "`n")[-1].Trim()
 }
-function Install-Torch {
-  $gpu = Test-NvidiaGpu
+function Install-Torch([switch]$CpuOnly) {
+  $gpu = (Test-NvidiaGpu) -and -not $CpuOnly
   $current = Get-TorchBuild
   if ($gpu) {
     if ($current -ne 'none' -and $current -ne 'cpu') { Say "  GPU version of PyTorch already installed (CUDA $current)."; return }
@@ -74,9 +74,18 @@ Say '  This downloads 2-5 GB and takes 10-40 minutes (USB sticks are slow to wri
 Say '  Keep this window open until it says the USB is ready.'
 
 $drive = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
-$needGB = if (Test-NvidiaGpu) { 9 } else { 4 }
-if ($drive -and ($drive.Free + 0) -lt ($needGB * 1GB) -and -not (Test-Path (Join-Path $Runtime 'Lib\site-packages\torch'))) {
-  Fail ("Not enough space: MinusOne needs about $needGB GB free on " + $Root.Substring(0, 2) + ".")
+# Space: the GPU version of PyTorch is about 5 GB (NVIDIA's CUDA libraries), the CPU version 0.5 GB.
+$freeGB = if ($drive) { [math]::Round($drive.Free / 1GB, 1) } else { 99 }
+$haveTorch = Test-Path (Join-Path $Runtime 'Lib\site-packages\torch')
+$CpuOnly = $false
+if ((Test-NvidiaGpu) -and -not $haveTorch -and $freeGB -lt 6) { $CpuOnly = $true }
+if ((Test-NvidiaGpu) -and $haveTorch -and $freeGB -lt 5 -and (Get-TorchBuild) -eq 'cpu') { $CpuOnly = $true }
+if ($CpuOnly) {
+  Say "  Only $freeGB GB free: not enough for the GPU version (needs about 6 GB, or 5 GB if the processor version is already installed)." 'Yellow'
+  Say '  Installing the processor version instead. Splitting will be slower; use a bigger USB for GPU speed.' 'Yellow'
+}
+if (-not $haveTorch -and $freeGB -lt 2) {
+  Fail ("Not enough space: MinusOne needs at least 2 GB free on " + $Root.Substring(0, 2) + " (about 6 GB for GPU speed).")
 }
 New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
 
@@ -117,7 +126,7 @@ try {
   # -------------------------------------------------------------- 3. packages
   Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
   $env:PIP_NO_WARN_SCRIPT_LOCATION = '1'
-  Install-Torch
+  Install-Torch -CpuOnly:$CpuOnly
   # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
   # in pip's isolated mode, so install the build tools first and build it directly.
   & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
@@ -134,6 +143,11 @@ try {
     if (Test-Path $src) { Copy-Item $src (Join-Path $Runtime $dll) -Force }
   }
   if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and run setup again.' }
+
+  # Free space: remove files PyTorch only needs for compiling C++ extensions, never for running.
+  $torchDir = Join-Path $Runtime 'Lib\site-packages\torch'
+  Remove-Item -Recurse -Force (Join-Path $torchDir 'include') -ErrorAction SilentlyContinue
+  Get-ChildItem (Join-Path $torchDir 'lib') -Filter '*.lib' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 
   # -------------------------------------------------------------- 4. ffmpeg
   Step 4 'ffmpeg (audio converter)'

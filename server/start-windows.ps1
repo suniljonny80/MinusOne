@@ -91,8 +91,8 @@ function Get-TorchBuild {
   if ($code -ne 0 -or -not $v) { return 'none' }
   return ("$v" -split "`n")[-1].Trim()
 }
-function Install-Torch {
-  $gpu = Test-NvidiaGpu
+function Install-Torch([switch]$CpuOnly) {
+  $gpu = (Test-NvidiaGpu) -and -not $CpuOnly
   $current = Get-TorchBuild
   if ($gpu) {
     if ($current -ne 'none' -and $current -ne 'cpu') { Say "  GPU version of PyTorch already installed (CUDA $current)."; return }

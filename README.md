@@ -48,7 +48,7 @@ and in your browser, so opening them again is instant.
 Run MinusOne from a USB stick on any Windows 10/11 PC, in its own app window.
 
 1. Download **`MinusOne-USB.zip`** (build it with `python desktop/build_usb.py`, or grab it from the
-   releases) and copy the `MinusOne` folder inside it to a USB stick with at least 4 GB free.
+   releases) and copy the `MinusOne` folder inside it to a USB stick (about 6 GB free for GPU speed on NVIDIA PCs, 2 GB for the processor-only version).
 2. Double-click **`Set up USB.bat`** once, on a PC with internet. It puts a portable Python, the
    splitting AI and everything else on the stick (about 2 GB, 10–30 minutes).
 3. From then on, on any Windows PC: double-click **`MinusOne.exe`**.

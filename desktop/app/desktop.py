@@ -66,6 +66,7 @@ os.environ.setdefault("HF_HOME", str(MODELS / "hf"))
 os.environ.setdefault("TORCH_HOME", str(MODELS / "torch"))
 os.environ.setdefault("DEMUCS_MODEL", "htdemucs_6s")
 os.environ.setdefault("MAX_MINUTES", "15")
+os.environ.setdefault("MAX_SONGS", "3")   # songs live in the app library; keep the server copy small
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 if (MODELS / "hf").is_dir() and any((MODELS / "hf").rglob("*.safetensors")):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")   # model already on the USB: never wait for the network

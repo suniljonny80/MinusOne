@@ -18,8 +18,9 @@ README = """MinusOne (portable)
 Play along with any song, minus your part.
 
 FIRST TIME (on a PC with internet):
-  1. Copy this whole MinusOne folder to your USB stick (at least 4 GB free).
-  2. Double-click "Set up USB.bat". It downloads about 2 GB onto the USB
+  1. Copy this whole MinusOne folder to your USB stick. It needs about 6 GB free
+     for GPU speed on NVIDIA PCs, or 2 GB for the processor-only version.
+  2. Double-click "Set up USB.bat". It downloads 2-5 GB onto the USB
      (portable Python and the instrument-splitting AI). Takes 10-30 minutes.
 
 EVERY TIME, ON ANY WINDOWS 10/11 PC:
