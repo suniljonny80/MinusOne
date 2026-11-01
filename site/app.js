@@ -3,6 +3,8 @@ import { Engine } from './engine.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const CFG = window.MINUSONE_CONFIG || {};
+const DESKTOP = !!CFG.desktop;          // running inside the USB desktop app
+if (DESKTOP) document.documentElement.classList.add('desktop');
 
 // ------------------------------------------------------------------ instruments
 const PARTS = {
@@ -89,6 +91,7 @@ function setupPicker() {
 const server = {
   url: '', key: '', state: 'unset', info: null,
   load() {
+    if (DESKTOP) { this.url = location.origin; this.key = ''; return; }
     // The PC launcher opens the site as ?server=<tunnel address>; remember it and tidy the URL.
     const q = new URLSearchParams(location.search);
     const fromLink = (q.get('server') || '').trim();
@@ -774,12 +777,20 @@ async function exportMix() {
     const what = mode === 'without' ? ` (no ${you})` : mode === 'only' ? ` (${you} only)` : mode === 'custom' ? ' (custom mix)' : '';
     const extra = [song.tempo !== 1 ? `${Math.round(song.tempo * 100)}%` : '', song.pitch ? `key ${song.pitch > 0 ? '+' : ''}${song.pitch}` : ''].filter(Boolean).join(' ');
     const name = `${song.rec.title}${what}${extra ? ' ' + extra : ''}${useLoop ? ' loop' : ''}.wav`.replace(/[\\/:*?"<>|]+/g, '');
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    toast('Mix downloaded');
+    if (DESKTOP) {
+      btn.textContent = 'Saving…';
+      const res = await fetch('/api/export?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+      if (!res.ok) throw new Error(`the app refused the file (${res.status})`);
+      const info = await res.json();
+      toast(`Saved “${info.name}” in the Exports folder on your USB`);
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      toast('Mix downloaded');
+    }
   } catch (err) {
     toast("Couldn't prepare the download: " + err.message);
   } finally {
@@ -900,6 +911,10 @@ function prefillFromQuery() {
 // ------------------------------------------------------------------ start
 server.load();
 if (CFG.repo) $('#repoLink').href = CFG.repo;
+if (DESKTOP) {
+  $('#exportButton').textContent = 'Save mix';
+  document.querySelector('.foot').innerHTML = '<p>Songs are split on this computer and saved on your USB, so they go wherever the USB goes. Only use music you have the right to practise with.</p>';
+}
 setYou(you, false);
 setupPicker();
 setupSettings();

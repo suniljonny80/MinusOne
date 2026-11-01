@@ -43,6 +43,31 @@ and in your browser, so opening them again is instant.
 
 ---
 
+## Portable USB app (no website, no install)
+
+Run MinusOne from a USB stick on any Windows 10/11 PC, in its own app window.
+
+1. Download **`MinusOne-USB.zip`** (build it with `python desktop/build_usb.py`, or grab it from the
+   releases) and copy the `MinusOne` folder inside it to a USB stick with at least 4 GB free.
+2. Double-click **`Set up USB.bat`** once, on a PC with internet. It puts a portable Python, the
+   splitting AI and everything else on the stick (about 2 GB, 10–30 minutes).
+3. From then on, on any Windows PC: double-click **`MinusOne.exe`**.
+
+Your songs are saved on the USB, saved mixes go to its `Exports` folder, and uploading a song works
+offline (YouTube links need internet). The app window uses Microsoft Edge WebView2, which is built
+into Windows 10 and 11.
+
+```
+desktop/
+  launcher/launcher.c   MinusOne.exe source (cross-compiled with zig, see the comment at the top)
+  launcher/MinusOne.exe the built launcher
+  app/desktop.py        starts the server and opens the app window
+  app/setup-usb.ps1     one-time USB setup
+  build_usb.py          assembles dist/MinusOne and MinusOne-USB.zip
+```
+
+---
+
 ## Good to know
 
 **YouTube blocking.** YouTube rarely blocks home internet connections, but if a video won't download,

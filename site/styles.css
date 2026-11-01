@@ -126,6 +126,10 @@ a { color: inherit; }
 .server-pill[data-state="unset"] .dot { background: var(--drums); }
 @keyframes blink { 50% { opacity: .3; } }
 
+/* desktop app: the server lives inside the app, so its status button is not needed */
+.desktop .server-pill { display: none; }
+.desktop .topbar { padding-top: 16px; }
+
 /* ---------- home ---------- */
 .view { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter) 64px; }
 .home { padding-top: clamp(40px, 9vh, 104px); }

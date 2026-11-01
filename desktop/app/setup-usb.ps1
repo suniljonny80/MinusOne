@@ -1,0 +1,113 @@
+# MinusOne USB setup. Run once (double-click "Set up USB.bat") on a Windows PC with internet.
+# Puts a private, portable Python and everything MinusOne needs next to MinusOne.exe,
+# so the USB then works on any Windows 10/11 PC without installing anything.
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+$Host.UI.RawUI.WindowTitle = 'MinusOne USB setup'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$PyVersion = '3.12.10'
+$Model = 'htdemucs_6s'
+
+$App = $PSScriptRoot                       # <usb>\MinusOne\app
+$Root = Split-Path -Parent $App            # <usb>\MinusOne
+$Runtime = Join-Path $Root 'runtime'
+$Py = Join-Path $Runtime 'python.exe'
+$Models = Join-Path $Root 'models'
+$Tmp = Join-Path $Root 'setup-temp'
+
+function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
+function Fail($msg) { Say ''; Say "  $msg" 'Red'; Say ''; exit 1 }
+function Step($n, $msg) { Say ''; Say "  [$n/5] $msg" 'Cyan' }
+
+Say ''
+Say '  MinusOne USB setup' 'White'
+Say '  ------------------' 'DarkGray'
+Say "  Installing to: $Root"
+Say '  This downloads about 2 GB and takes 10-30 minutes (USB sticks are slow to write).'
+Say '  Keep this window open until it says the USB is ready.'
+
+$drive = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
+if ($drive -and $drive.Free -lt 4GB) { Fail ("Not enough space: MinusOne needs about 4 GB free on " + $Root.Substring(0, 2) + ".") }
+New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
+
+function Get-File($url, $out) {
+  for ($i = 1; $i -le 3; $i++) {
+    try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out; return } catch {
+      if ($i -eq 3) { Fail "Download failed: $url`n  $($_.Exception.Message)" }
+      Start-Sleep -Seconds 3
+    }
+  }
+}
+
+try {
+  # -------------------------------------------------------------- 1. portable Python
+  Step 1 "Portable Python $PyVersion"
+  if (-not (Test-Path $Py)) {
+    $zip = Join-Path $Tmp 'python.zip'
+    Get-File "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-embed-amd64.zip" $zip
+    New-Item -ItemType Directory -Force $Runtime | Out-Null
+    Expand-Archive -Path $zip -DestinationPath $Runtime -Force
+  }
+  # let the portable Python use installed packages
+  $pth = Get-ChildItem $Runtime -Filter 'python*._pth' | Select-Object -First 1
+  if (-not $pth) { Fail 'The portable Python looks incomplete. Delete the runtime folder and run setup again.' }
+  $zipName = (Get-ChildItem $Runtime -Filter 'python3*.zip' | Select-Object -First 1).Name
+  Set-Content -Path $pth.FullName -Encoding ASCII -Value @($zipName, '.', 'Lib\site-packages', 'import site')
+  New-Item -ItemType Directory -Force (Join-Path $Runtime 'Lib\site-packages') | Out-Null
+
+  # -------------------------------------------------------------- 2. pip
+  Step 2 'Package installer'
+  & $Py -m pip --version 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    $getpip = Join-Path $Tmp 'get-pip.py'
+    Get-File 'https://bootstrap.pypa.io/get-pip.py' $getpip
+    & $Py $getpip --no-warn-script-location --quiet
+    if ($LASTEXITCODE -ne 0) { Fail 'Installing pip failed.' }
+  }
+
+  # -------------------------------------------------------------- 3. packages
+  Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
+  $env:PIP_NO_WARN_SCRIPT_LOCATION = '1'
+  & $Py -m pip install --upgrade --no-cache-dir torch
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and run setup again.' }
+  # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
+  # in pip's isolated mode, so install the build tools first and build it directly.
+  & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
+  & $Py -m pip install --no-cache-dir --no-build-isolation proxy_tools
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing the app window helper failed. Run setup again.' }
+  & $Py -m pip install --upgrade --no-cache-dir -r (Join-Path $App 'server\requirements.txt') 'pywebview>=6' imageio-ffmpeg
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and run setup again.' }
+
+  # -------------------------------------------------------------- 4. ffmpeg
+  Step 4 'ffmpeg (audio converter)'
+  $bin = Join-Path $Runtime 'bin'
+  New-Item -ItemType Directory -Force $bin | Out-Null
+  & $Py -c "import imageio_ffmpeg, shutil, sys; shutil.copy(imageio_ffmpeg.get_ffmpeg_exe(), sys.argv[1])" (Join-Path $bin 'ffmpeg.exe')
+  if ($LASTEXITCODE -ne 0) { Fail 'Setting up ffmpeg failed.' }
+
+  # -------------------------------------------------------------- 5. AI model
+  Step 5 'Instrument-splitting AI model (about 80 MB)'
+  $env:HF_HOME = Join-Path $Models 'hf'
+  $env:TORCH_HOME = Join-Path $Models 'torch'
+  & $Py -c "from demucs.pretrained import get_model; get_model('$Model'); print('  model ready')"
+  if ($LASTEXITCODE -ne 0) { Fail 'Downloading the AI model failed. Check your internet connection and run setup again.' }
+
+  # quick self-test of the pieces the app needs
+  & $Py -c "import fastapi, uvicorn, yt_dlp, webview, demucs, numpy; print('  self-test passed')"
+  if ($LASTEXITCODE -ne 0) { Fail 'Self-test failed. Run setup again.' }
+}
+finally {
+  Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
+}
+
+Say ''
+Say '  The USB is ready.' 'Green'
+Say ''
+Say '  Double-click MinusOne.exe to open MinusOne, on this PC or any other Windows 10/11 PC.' 'White'
+Say '  Songs you split and mixes you save stay on the USB.' 'Gray'
+Say ''
+$open = Read-Host '  Open MinusOne now? (Y/n)'
+if ($open -notmatch '^[nN]') { Start-Process (Join-Path $Root 'MinusOne.exe') -WorkingDirectory $Root }
