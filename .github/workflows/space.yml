@@ -1,0 +1,57 @@
+name: Deploy stem server
+
+# Creates (or updates) your free Hugging Face Space from the server/ folder.
+# Needs: repository secret HF_TOKEN (a Hugging Face "write" token)
+#        repository variable HF_SPACE, e.g.  your-hf-name/minusone
+# Optional secrets: SPACE_ACCESS_KEY, YT_COOKIES
+
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/space.yml"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check settings
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
+            echo "::warning::Add the HF_TOKEN secret and HF_SPACE variable (see README) to deploy the stem server."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload server to Hugging Face
+        if: env.SKIP != '1'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+          ACCESS_KEY: ${{ secrets.SPACE_ACCESS_KEY }}
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          PAGES_ORIGIN: https://${{ github.repository_owner }}.github.io
+        run: |
+          pip install -q huggingface_hub
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          repo = os.environ["HF_SPACE"].strip()
+          api.create_repo(repo, repo_type="space", space_sdk="docker", exist_ok=True)
+          origins = os.environ["PAGES_ORIGIN"].lower() + ",http://localhost:8080,http://127.0.0.1:8080"
+          api.add_space_variable(repo, "ALLOWED_ORIGINS", origins)
+          if os.environ.get("ACCESS_KEY"):
+              api.add_space_secret(repo, "ACCESS_KEY", os.environ["ACCESS_KEY"])
+          if os.environ.get("YT_COOKIES"):
+              api.add_space_secret(repo, "YT_COOKIES", os.environ["YT_COOKIES"])
+          api.upload_folder(folder_path="server", repo_id=repo, repo_type="space",
+                            commit_message="Update MinusOne stem server")
+          sub = repo.lower().replace("/", "-").replace("_", "-").replace(".", "-")
+          print(f"Space: https://huggingface.co/spaces/{repo}")
+          print(f"API:   https://{sub}.hf.space/api/health")
+          EOF

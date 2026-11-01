@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MinusOne: play along without your part</title>
+  <meta name="description" content="Paste a YouTube link, split the song into vocals, drums, bass, guitar and keys, and mute your own part to play along.">
+  <meta name="theme-color" content="#22262A">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body data-you="drums">
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <a class="wordmark" href="#/" aria-label="MinusOne home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="4" width="4" height="24" rx="2"/><rect x="14" y="4" width="4" height="24" rx="2"/><rect x="24" y="4" width="4" height="24" rx="2"/><rect class="cap" x="1" y="17" width="10" height="5" rx="1.5"/><rect class="cap" x="11" y="8" width="10" height="5" rx="1.5"/><rect class="cap off" x="21" y="22" width="10" height="5" rx="1.5"/></svg>
+      <span>MinusOne</span>
+    </a>
+    <button class="server-pill" id="serverPill" type="button" aria-haspopup="dialog">
+      <span class="dot" aria-hidden="true"></span><span id="serverText">Checking server</span>
+    </button>
+  </header>
+
+  <main id="main">
+    <!-- ============ HOME ============ -->
+    <section id="home" class="view home" aria-labelledby="heroTitle">
+      <h1 class="hero" id="heroTitle">
+        <span class="picker"><span class="hero-i">I&nbsp;</span><span class="hero-part" id="partButton" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="partMenu"><span class="ph">play the</span> <span class="nw"><span class="ph">drums</span><span class="hero-dot">.</span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7"/></svg></span></span>
+          <ul class="part-menu" id="partMenu" role="listbox" aria-label="Your instrument" hidden></ul>
+        </span>
+      </h1>
+      <p class="lede" id="lede">Paste a YouTube link or drop in a song. MinusOne splits it into vocals, drums, bass, guitar and keys, then takes the drums out so you can play along.</p>
+
+      <form class="split" id="splitForm" novalidate>
+        <label class="sr" for="urlInput">YouTube link</label>
+        <div class="split-row">
+          <input id="urlInput" name="url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+                 placeholder="https://www.youtube.com/watch?v=…" required>
+          <button class="btn btn-primary" id="splitButton" type="submit">Split song</button>
+        </div>
+        <div class="split-alt">
+          <button class="btn-link" id="uploadButton" type="button">Upload an audio file instead</button>
+          <span class="hint">MP3, WAV, M4A or FLAC, up to 10 minutes</span>
+          <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.opus,.aac" hidden>
+        </div>
+        <p class="form-error" id="formError" role="alert" hidden></p>
+      </form>
+
+      <section class="job" id="job" aria-live="polite" hidden>
+        <div class="job-head">
+          <img class="job-thumb" id="jobThumb" alt="" hidden>
+          <div>
+            <p class="job-title" id="jobTitle">Getting ready</p>
+            <p class="job-note" id="jobNote"></p>
+          </div>
+        </div>
+        <ol class="steps" id="steps">
+          <li data-step="fetch"><span class="step-name">Get the audio</span><span class="step-state"></span></li>
+          <li data-step="split"><span class="step-name">Split into instruments</span><span class="step-state"></span></li>
+          <li data-step="load"><span class="step-name">Load into the mixer</span><span class="step-state"></span></li>
+        </ol>
+        <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="jobBar"></span></div>
+        <div class="job-actions"><button class="btn-link" id="jobCancel" type="button">Stop waiting</button></div>
+      </section>
+
+      <section class="library" aria-labelledby="libTitle">
+        <h2 id="libTitle">Your songs</h2>
+        <p class="empty" id="libEmpty">Songs you split are saved on this device, so they open instantly next time, even offline.</p>
+        <ul class="songs" id="songList"></ul>
+      </section>
+
+      <footer class="foot">
+        <p>Splitting runs on your own free server; nothing is sold or shared. Only use music you have the right to practise with.</p>
+        <p><a href="https://github.com/" id="repoLink" target="_blank" rel="noopener">How MinusOne works and how to set it up</a></p>
+      </footer>
+    </section>
+
+    <!-- ============ SONG / MIXER ============ -->
+    <section id="song" class="view song" hidden aria-labelledby="songTitle">
+      <div class="song-head">
+        <a class="back" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Songs</a>
+        <div class="song-meta">
+          <img class="song-thumb" id="songThumb" alt="" hidden>
+          <div>
+            <h1 class="song-title" id="songTitle">Song</h1>
+            <p class="song-sub" id="songSub"></p>
+          </div>
+        </div>
+        <div class="modes" role="radiogroup" aria-label="What you hear" id="modes">
+          <button type="button" role="radio" data-mode="full" aria-checked="false">Full song</button>
+          <button type="button" role="radio" data-mode="without" aria-checked="true">Without <span class="you-name">drums</span></button>
+          <button type="button" role="radio" data-mode="only" aria-checked="false">Only <span class="you-name">drums</span></button>
+        </div>
+      </div>
+
+      <div class="overview" id="overview">
+        <canvas id="wave" aria-label="Song waveform. Click to jump, drag to loop a section." role="img"></canvas>
+        <div class="loop-band" id="loopBand" hidden></div>
+        <div class="playhead" id="playhead"></div>
+      </div>
+
+      <div class="transport">
+        <button class="play" id="playButton" type="button" aria-label="Play">
+          <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>
+        </button>
+        <button class="skipbtn" id="backButton" type="button" aria-label="Back 5 seconds">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6L4 12l7 6zM20 6l-7 6 7 6z"/></svg>
+        </button>
+        <p class="clock"><span id="timeNow">0:00</span><span class="clock-total"> / <span id="timeTotal">0:00</span></span></p>
+
+        <div class="tools">
+          <div class="tool loop-tool">
+            <button class="chip" id="loopButton" type="button" aria-pressed="false">Loop</button>
+            <span class="loop-range" id="loopRange">Drag over the waveform</span>
+            <button class="chip-x" id="loopClear" type="button" aria-label="Clear loop" hidden>×</button>
+          </div>
+          <div class="tool stepper" aria-label="Speed">
+            <span class="tool-name">Speed</span>
+            <button type="button" class="step" id="slower" aria-label="Slower">−</button>
+            <button type="button" class="step-val" id="speedVal" title="Reset speed">100%</button>
+            <button type="button" class="step" id="faster" aria-label="Faster">+</button>
+          </div>
+          <div class="tool stepper" aria-label="Key">
+            <span class="tool-name">Key</span>
+            <button type="button" class="step" id="keyDown" aria-label="Key down a semitone">−</button>
+            <button type="button" class="step-val" id="keyVal" title="Reset key">0</button>
+            <button type="button" class="step" id="keyUp" aria-label="Key up a semitone">+</button>
+          </div>
+          <button class="btn btn-quiet" id="exportButton" type="button">Download mix</button>
+        </div>
+      </div>
+
+      <div class="console" id="console" role="group" aria-label="Mixer"></div>
+
+      <p class="keys-help">Space plays and pauses. Arrow keys jump 5 seconds. Number keys mute a channel; hold Shift to solo it. L toggles the loop.</p>
+    </section>
+  </main>
+
+  <div class="loading" id="loading" hidden><div class="loading-card"><p id="loadingText">Loading</p><div class="bar"><span id="loadingBar"></span></div></div></div>
+  <div class="drop" id="drop" hidden><p>Drop the song to split it</p></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
+    <form method="dialog" id="settingsForm">
+      <h2 id="settingsTitle">Stem server</h2>
+      <p>MinusOne sends songs to a server that splits them. Use your free Hugging Face Space address, or a computer on your network running the server.</p>
+      <label for="serverUrl">Server address</label>
+      <input id="serverUrl" type="url" placeholder="https://your-name-minusone.hf.space" spellcheck="false" autocomplete="off">
+      <label for="serverKey">Access key <span class="opt">if your server has one</span></label>
+      <input id="serverKey" type="password" autocomplete="off">
+      <p class="settings-status" id="settingsStatus" role="status"></p>
+      <div class="settings-actions">
+        <button class="btn btn-quiet" type="button" id="testServer">Test connection</button>
+        <button class="btn btn-quiet" value="cancel" type="submit" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" value="save" type="submit" id="saveServer">Save</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
