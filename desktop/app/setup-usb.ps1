@@ -85,6 +85,15 @@ try {
   & $Py -m pip install --no-cache-dir --no-build-isolation proxy_tools
   if ($LASTEXITCODE -ne 0) { Fail 'Installing the app window helper failed. Run setup again.' }
   & $Py -m pip install --upgrade --no-cache-dir -r (Join-Path $App 'server\requirements.txt') 'pywebview>=6' imageio-ffmpeg
+
+  # PyTorch needs Microsoft's Visual C++ runtime, which many PCs don't have. Keep a copy on the USB,
+  # next to python.exe, so it works on any PC (Microsoft allows shipping these files with an app).
+  & $Py -m pip install --upgrade --no-cache-dir msvc-runtime
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing the Visual C++ runtime failed. Run setup again.' }
+  foreach ($dll in 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcruntime140_threads.dll') {
+    $src = Join-Path $Runtime "Scripts\$dll"
+    if (Test-Path $src) { Copy-Item $src (Join-Path $Runtime $dll) -Force }
+  }
   if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and run setup again.' }
 
   # -------------------------------------------------------------- 4. ffmpeg
@@ -102,7 +111,7 @@ try {
   if ($LASTEXITCODE -ne 0) { Fail 'Downloading the AI model failed. Check your internet connection and run setup again.' }
 
   # quick self-test of the pieces the app needs
-  & $Py -c "import fastapi, uvicorn, yt_dlp, webview, demucs, numpy; print('  self-test passed')"
+  & $Py -c "import fastapi, uvicorn, yt_dlp, webview, demucs, numpy, torch; torch.zeros(4).sum().item(); print('  self-test passed (PyTorch ' + torch.__version__ + ')')"
   if ($LASTEXITCODE -ne 0) { Fail 'Self-test failed. Run setup again.' }
 }
 finally {
