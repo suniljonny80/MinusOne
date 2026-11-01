@@ -12,7 +12,7 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 $Host.UI.RawUI.WindowTitle = 'MinusOne server - keep this window open'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Site  = 'https://suniljonny80.github.io/minusone/'
+$Site  = 'https://suniljonny80.github.io/MinusOne/'
 $Model = 'htdemucs_6s'
 $Port  = 7860
 

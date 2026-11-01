@@ -17,7 +17,7 @@ It costs nothing to run: the website is hosted on **GitHub Pages**, and the AI t
 ([Demucs](https://github.com/adefossez/demucs) `htdemucs_6s`) runs on **your own Windows PC**. A free
 Cloudflare tunnel lets your phone, tablet or any other device use it too.
 
-**Website:** https://suniljonny80.github.io/minusone/
+**Website:** https://suniljonny80.github.io/MinusOne/
 
 ---
 
@@ -90,7 +90,7 @@ uvicorn app:app --port 7860
 cloudflared tunnel --url http://localhost:7860   # optional: reach it from other devices
 ```
 
-Then open `https://suniljonny80.github.io/minusone/?server=<the tunnel address>`.
+Then open `https://suniljonny80.github.io/MinusOne/?server=<the tunnel address>`.
 
 **Try the website locally:** `cd site && python -m http.server 8080`, then open http://localhost:8080.
 
