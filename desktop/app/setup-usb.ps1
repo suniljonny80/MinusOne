@@ -18,6 +18,13 @@ $Py = Join-Path $Runtime 'python.exe'
 $Models = Join-Path $Root 'models'
 $Tmp = Join-Path $Root 'setup-temp'
 
+# Run a program without letting its warning messages stop the script (PowerShell 5.1 quirk)
+function Invoke-Quiet([scriptblock]$Block) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Block 2>&1 | Out-Null } catch {} finally { $ErrorActionPreference = $old }
+}
+
 function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 function Fail($msg) { Say ''; Say "  $msg" 'Red'; Say ''; exit 1 }
 function Step($n, $msg) { Say ''; Say "  [$n/5] $msg" 'Cyan' }
@@ -60,8 +67,7 @@ try {
 
   # -------------------------------------------------------------- 2. pip
   Step 2 'Package installer'
-  & $Py -m pip --version 2>$null | Out-Null
-  if ($LASTEXITCODE -ne 0) {
+  if (-not (Test-Path (Join-Path $Runtime 'Lib\site-packages\pip\__init__.py'))) {
     $getpip = Join-Path $Tmp 'get-pip.py'
     Get-File 'https://bootstrap.pypa.io/get-pip.py' $getpip
     & $Py $getpip --no-warn-script-location --quiet

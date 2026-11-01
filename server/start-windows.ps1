@@ -23,6 +23,13 @@ $Bin  = Join-Path $Root 'bin'
 New-Item -ItemType Directory -Force $Bin | Out-Null
 Set-Location $Root
 
+# Run a program without letting its warning messages stop the script (PowerShell 5.1 quirk)
+function Invoke-Quiet([scriptblock]$Block) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $Block 2>&1 | Out-Null } catch {} finally { $ErrorActionPreference = $old }
+}
+
 function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 function Fail($msg) {
   Say ''
@@ -42,10 +49,12 @@ function Find-Python {
     $exe = $t[0]
     $extra = @($t | Select-Object -Skip 1)
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
-    try {
-      $v = & $exe @extra -c "import sys; print(sys.version_info[0]*100+sys.version_info[1])" 2>$null
-      if ($LASTEXITCODE -eq 0 -and $v -and [int]$v -ge 310) { return , $t }
-    } catch {}
+    $v = $null
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $v = & $exe @extra -c "import sys; print(sys.version_info[0]*100+sys.version_info[1])" 2>$null } catch {}
+    $ErrorActionPreference = $old
+    if ($LASTEXITCODE -eq 0 -and $v -and [int]"$v".Trim() -ge 310) { return , $t }
   }
   return $null
 }
@@ -89,7 +98,7 @@ if (-not $installed) {
   Set-Content $marker $reqHash
 } else {
   # YouTube changes often; keep the downloader current.
-  & $Py -m pip install --quiet --upgrade 'yt-dlp[default]' 2>$null | Out-Null
+  Invoke-Quiet { & $Py -m pip install --quiet --upgrade 'yt-dlp[default]' }
 }
 
 # ------------------------------------------------------------------ 3. ffmpeg
@@ -182,7 +191,7 @@ try {
 
   $link = $Site + '?server=' + [uri]::EscapeDataString($url)
   $qr = Join-Path $Root 'phone-qr.png'
-  & $Py -c "import qrcode, sys; qrcode.make(sys.argv[1], border=2).save(sys.argv[2])" $link $qr 2>$null
+  Invoke-Quiet { & $Py -c "import qrcode, sys; qrcode.make(sys.argv[1], border=2).save(sys.argv[2])" $link $qr }
 
   Say ''
   Say '  MinusOne is ready.' 'Green'
