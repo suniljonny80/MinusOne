@@ -345,7 +345,10 @@ function describe(s) {
   if (s.status === 'preparing') return { step: 'split', pct: 0, note: 'Preparing the audio' };
   if (s.status === 'separating') {
     const mins = s.duration ? Math.max(1, Math.round((s.duration * 1.2) / 60)) : null;
-    return { step: 'split', pct: s.progress, note: 'Splitting into instruments. This takes about a minute on a fast PC, longer on an older one.' };
+    let note = 'Splitting into instruments.';
+    if (s.gpu) note = `Splitting on your ${s.device}. This usually takes under a minute.`;
+    else if (s.device && s.device !== 'checking') note = 'Splitting on the processor (no NVIDIA graphics card in use). This can take several minutes.';
+    return { step: 'split', pct: s.progress, note };
   }
   if (s.status === 'saving') return { step: 'split', pct: 100, note: 'Saving the stems' };
   return { step: 'load', pct: 0, note: '' };

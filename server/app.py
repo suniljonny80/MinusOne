@@ -66,6 +66,33 @@ if MODEL != "htdemucs_6s":                      # 4-stem models have no guitar/p
 
 YT_ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/|v/)|youtu\.be/|music\.youtube\.com/watch\?(?:.*&)?v=)([A-Za-z0-9_-]{11})")
 
+# ---------------------------------------------------------------- device (GPU or CPU)
+
+DEVICE = {"name": "checking", "gpu": False}
+
+
+def detect_device():
+    """Find out (without loading torch into this process) whether Demucs will use an NVIDIA GPU."""
+    if MOCK:
+        DEVICE.update(name="test mode", gpu=False)
+        return
+    code = ("import torch\n"
+            "print(('GPU:' + torch.cuda.get_device_name(0)) if torch.cuda.is_available() else "
+            "('CPU:cuda-build' if torch.version.cuda else 'CPU:cpu-build'))")
+    try:
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=180).stdout.strip()
+        kind, _, name = out.partition(":")
+        if kind == "GPU":
+            DEVICE.update(name=name, gpu=True)
+        else:
+            DEVICE.update(name="processor (CPU)", gpu=False, build=name)
+    except Exception as e:
+        DEVICE.update(name="processor (CPU)", gpu=False, error=str(e)[:200])
+    print("Demucs device:", DEVICE, flush=True)
+
+
+threading.Thread(target=detect_device, daemon=True).start()
+
 # ---------------------------------------------------------------- jobs
 
 jobs = {}                      # id -> dict
@@ -93,6 +120,8 @@ def is_finished(song_id):
 def public_job(job, request: Optional[Request] = None):
     out = {k: job.get(k) for k in ("id", "status", "stage", "progress", "title", "duration",
                                    "source", "youtube_id", "error", "model")}
+    out["device"] = DEVICE["name"]
+    out["gpu"] = DEVICE["gpu"]
     if job["status"] == "queued":
         with lock:
             ids = [j for j in queue]
@@ -216,6 +245,8 @@ def to_wav(src, dst, limit=MAX_SECONDS):
 def separate_demucs(job, wav, outdir):
     cmd = [sys.executable, "-m", "demucs", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
            "--filename", "{stem}.{ext}", "-o", str(outdir), str(wav)]
+    if not DEVICE["gpu"] and (os.cpu_count() or 1) >= 4:
+        cmd[3:3] = ["-j", "2"]      # CPU only: process two chunks in parallel
     threads = os.cpu_count() or 2
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), MKL_NUM_THREADS=str(threads))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -355,7 +386,8 @@ def health(x_access_key: str = Header(default="")):
         waiting = len(queue)
     return {"ok": True, "model": MODEL, "stems": [w for _, w in STEMS], "busy": busy, "queued": waiting,
             "max_minutes": MAX_SECONDS // 60, "needs_key": bool(ACCESS_KEY),
-            "key_ok": (not ACCESS_KEY) or x_access_key == ACCESS_KEY, "mock": MOCK}
+            "key_ok": (not ACCESS_KEY) or x_access_key == ACCESS_KEY, "mock": MOCK,
+            "device": DEVICE["name"], "gpu": DEVICE["gpu"]}
 
 
 @app.post("/api/split")

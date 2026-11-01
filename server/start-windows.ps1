@@ -75,6 +75,42 @@ if (-not (Test-Path $Py)) {
 $env:PATH = "$Venv\Scripts;$Bin;$env:PATH"
 $env:PYTHONIOENCODING = 'utf-8'
 
+# ---- PyTorch: GPU build when an NVIDIA card is present (5-20x faster splitting), CPU build otherwise
+function Test-NvidiaGpu {
+  if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { return $true }
+  try { return [bool](Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -match 'NVIDIA' }) } catch { return $false }
+}
+function Get-TorchBuild {
+  # 'none' = not installed, 'cpu' = CPU-only build, otherwise the CUDA version
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $v = $null
+  try { $v = & $Py -c "import torch; print(torch.version.cuda or 'cpu')" 2>$null } catch {}
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $old
+  if ($code -ne 0 -or -not $v) { return 'none' }
+  return ("$v" -split "`n")[-1].Trim()
+}
+function Install-Torch {
+  $gpu = Test-NvidiaGpu
+  $current = Get-TorchBuild
+  if ($gpu) {
+    if ($current -ne 'none' -and $current -ne 'cpu') { Say "  GPU version of PyTorch already installed (CUDA $current)."; return }
+    Say '  NVIDIA graphics card found: installing the GPU version of PyTorch (about 2.5 GB download).' 'Cyan'
+    if ($current -eq 'cpu') { & $Py -m pip uninstall -y torch }
+    foreach ($cu in 'cu128', 'cu126', 'cu130') {
+      & $Py -m pip install --no-cache-dir torch --index-url "https://download.pytorch.org/whl/$cu"
+      if ($LASTEXITCODE -eq 0) { Say "  GPU PyTorch installed ($cu)." 'Green'; return }
+      Say "  The $cu build didn't install, trying another..." 'Yellow'
+    }
+    Say '  The GPU version could not be installed, so the CPU version will be used.' 'Yellow'
+  } elseif ($current -ne 'none') {
+    return
+  }
+  & $Py -m pip install --no-cache-dir torch
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and try again.' }
+}
+
 # ------------------------------------------------------------------ 2. packages
 $reqHash = (Get-FileHash (Join-Path $Root 'requirements.txt')).Hash
 $marker = Join-Path $Venv 'minusone-installed.txt'
@@ -82,21 +118,13 @@ $installed = (Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $re
 if (-not $installed) {
   Say '  Installing packages (one time, 5-15 minutes)...' 'Cyan'
   & $Py -m pip install --upgrade pip --quiet
-  $hasTorch = $false
-  if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
-    Say '  NVIDIA graphics card found: installing the GPU version of PyTorch (much faster splitting).' 'Cyan'
-    & $Py -m pip install torch --index-url https://download.pytorch.org/whl/cu126
-    $hasTorch = ($LASTEXITCODE -eq 0)
-    if (-not $hasTorch) { Say '  GPU version failed, using the CPU version instead.' 'Yellow' }
-  }
-  if (-not $hasTorch) {
-    & $Py -m pip install torch
-    if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and try again.' }
-  }
+  Install-Torch
   & $Py -m pip install -r requirements.txt 'qrcode[pil]' imageio-ffmpeg
   if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and try again.' }
   Set-Content $marker $reqHash
 } else {
+  # switch to the GPU version if this PC has an NVIDIA card but only the CPU version is installed
+  if ((Test-NvidiaGpu) -and ((Get-TorchBuild) -eq 'cpu')) { Install-Torch }
   # YouTube changes often; keep the downloader current.
   Invoke-Quiet { & $Py -m pip install --quiet --upgrade 'yt-dlp[default]' }
 }

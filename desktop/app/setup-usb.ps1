@@ -29,15 +29,55 @@ function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 function Fail($msg) { Say ''; Say "  $msg" 'Red'; Say ''; exit 1 }
 function Step($n, $msg) { Say ''; Say "  [$n/5] $msg" 'Cyan' }
 
+# ---- PyTorch: GPU build when an NVIDIA card is present (5-20x faster splitting), CPU build otherwise
+function Test-NvidiaGpu {
+  if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { return $true }
+  try { return [bool](Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -match 'NVIDIA' }) } catch { return $false }
+}
+function Get-TorchBuild {
+  # 'none' = not installed, 'cpu' = CPU-only build, otherwise the CUDA version
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $v = $null
+  try { $v = & $Py -c "import torch; print(torch.version.cuda or 'cpu')" 2>$null } catch {}
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $old
+  if ($code -ne 0 -or -not $v) { return 'none' }
+  return ("$v" -split "`n")[-1].Trim()
+}
+function Install-Torch {
+  $gpu = Test-NvidiaGpu
+  $current = Get-TorchBuild
+  if ($gpu) {
+    if ($current -ne 'none' -and $current -ne 'cpu') { Say "  GPU version of PyTorch already installed (CUDA $current)."; return }
+    Say '  NVIDIA graphics card found: installing the GPU version of PyTorch (about 2.5 GB download).' 'Cyan'
+    if ($current -eq 'cpu') { & $Py -m pip uninstall -y torch }
+    foreach ($cu in 'cu128', 'cu126', 'cu130') {
+      & $Py -m pip install --no-cache-dir torch --index-url "https://download.pytorch.org/whl/$cu"
+      if ($LASTEXITCODE -eq 0) { Say "  GPU PyTorch installed ($cu)." 'Green'; return }
+      Say "  The $cu build didn't install, trying another..." 'Yellow'
+    }
+    Say '  The GPU version could not be installed, so the CPU version will be used.' 'Yellow'
+  } elseif ($current -ne 'none') {
+    return
+  }
+  & $Py -m pip install --no-cache-dir torch
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and try again.' }
+}
+
+
 Say ''
 Say '  MinusOne USB setup' 'White'
 Say '  ------------------' 'DarkGray'
 Say "  Installing to: $Root"
-Say '  This downloads about 2 GB and takes 10-30 minutes (USB sticks are slow to write).'
+Say '  This downloads 2-5 GB and takes 10-40 minutes (USB sticks are slow to write).'
 Say '  Keep this window open until it says the USB is ready.'
 
 $drive = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
-if ($drive -and $drive.Free -lt 4GB) { Fail ("Not enough space: MinusOne needs about 4 GB free on " + $Root.Substring(0, 2) + ".") }
+$needGB = if (Test-NvidiaGpu) { 9 } else { 4 }
+if ($drive -and ($drive.Free + 0) -lt ($needGB * 1GB) -and -not (Test-Path (Join-Path $Runtime 'Lib\site-packages\torch'))) {
+  Fail ("Not enough space: MinusOne needs about $needGB GB free on " + $Root.Substring(0, 2) + ".")
+}
 New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
 
 function Get-File($url, $out) {
@@ -77,8 +117,7 @@ try {
   # -------------------------------------------------------------- 3. packages
   Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
   $env:PIP_NO_WARN_SCRIPT_LOCATION = '1'
-  & $Py -m pip install --upgrade --no-cache-dir torch
-  if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and run setup again.' }
+  Install-Torch
   # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
   # in pip's isolated mode, so install the build tools first and build it directly.
   & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
@@ -111,7 +150,7 @@ try {
   if ($LASTEXITCODE -ne 0) { Fail 'Downloading the AI model failed. Check your internet connection and run setup again.' }
 
   # quick self-test of the pieces the app needs
-  & $Py -c "import fastapi, uvicorn, yt_dlp, webview, demucs, numpy, torch; torch.zeros(4).sum().item(); print('  self-test passed (PyTorch ' + torch.__version__ + ')')"
+  & $Py -c "import fastapi, uvicorn, yt_dlp, webview, demucs, numpy, torch; torch.zeros(4).sum().item(); print('  self-test passed (PyTorch ' + torch.__version__ + ', ' + ('GPU: ' + torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU') + ')')"
   if ($LASTEXITCODE -ne 0) { Fail 'Self-test failed. Run setup again.' }
 }
 finally {
