@@ -3,6 +3,6 @@
 //   "https://your-name-minusone.hf.space"
 // Visitors can also change it in the app (tap the server status at the top right).
 window.MINUSONE_CONFIG = {
-  server: "",
-  repo: "",
+  server: "https://estronim-minusone.hf.space",
+  repo: "https://github.com/suniljonny80/minusone",
 };
