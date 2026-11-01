@@ -74,7 +74,7 @@
       </section>
 
       <footer class="foot">
-        <p>Splitting runs on your own free server; nothing is sold or shared. Only use music you have the right to practise with.</p>
+        <p>Songs are split on your own PC and saved in your browser; nothing is uploaded anywhere else. Only use music you have the right to practise with.</p>
         <p><a href="https://github.com/" id="repoLink" target="_blank" rel="noopener">How MinusOne works and how to set it up</a></p>
       </footer>
     </section>
@@ -147,10 +147,10 @@
 
   <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
     <form method="dialog" id="settingsForm">
-      <h2 id="settingsTitle">Stem server</h2>
-      <p>MinusOne sends songs to a server that splits them. Use your free Hugging Face Space address, or a computer on your network running the server.</p>
+      <h2 id="settingsTitle">MinusOne server</h2>
+      <p>Songs are split by the MinusOne server running on your PC. Starting it opens this page already connected; on a phone, scan the QR code it shows. You can also paste the address from the server window here.</p>
       <label for="serverUrl">Server address</label>
-      <input id="serverUrl" type="url" placeholder="https://your-name-minusone.hf.space" spellcheck="false" autocomplete="off">
+      <input id="serverUrl" type="url" placeholder="https://something.trycloudflare.com" spellcheck="false" autocomplete="off">
       <label for="serverKey">Access key <span class="opt">if your server has one</span></label>
       <input id="serverKey" type="password" autocomplete="off">
       <p class="settings-status" id="settingsStatus" role="status"></p>

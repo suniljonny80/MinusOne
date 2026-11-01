@@ -89,17 +89,26 @@ function setupPicker() {
 const server = {
   url: '', key: '', state: 'unset', info: null,
   load() {
+    // The PC launcher opens the site as ?server=<tunnel address>; remember it and tidy the URL.
+    const q = new URLSearchParams(location.search);
+    const fromLink = (q.get('server') || '').trim();
+    if (/^https?:\/\//.test(fromLink)) {
+      store.set('server', fromLink.replace(/\/+$/, ''));
+      q.delete('server');
+      const rest = q.toString();
+      history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+    }
     this.url = (store.get('server', '') || CFG.server || '').trim().replace(/\/+$/, '');
     this.key = store.get('key', '') || '';
   },
   headers(extra = {}) { return this.key ? { 'X-Access-Key': this.key, ...extra } : extra; },
   async call(path, opts = {}) {
-    if (!this.url) throw new Error('No stem server is set up yet. Tap the server status at the top right to add one.');
+    if (!this.url) throw new Error('Not connected to a MinusOne server yet. Start the server on your PC; it opens this page already connected.');
     let res;
     try {
       res = await fetch(this.url + path, { ...opts, headers: this.headers(opts.headers) });
     } catch {
-      throw new Error("Couldn't reach the stem server. It may be waking up; try again in a minute.");
+      throw new Error("Couldn't reach the MinusOne server. Check that the server window is open on your PC. If you restarted it, open the new link or scan the new QR code it shows.");
     }
     let body = null;
     try { body = await res.json(); } catch { /* not json */ }
@@ -115,7 +124,7 @@ const server = {
 
 async function checkServer(quiet) {
   const pill = $('#serverPill'), text = $('#serverText');
-  if (!server.url) { pill.dataset.state = 'unset'; text.textContent = 'Set up server'; server.state = 'unset'; return; }
+  if (!server.url) { pill.dataset.state = 'unset'; text.textContent = 'Connect server'; server.state = 'unset'; return; }
   if (!quiet) { pill.dataset.state = 'waking'; text.textContent = 'Connecting'; }
   try {
     const ctrl = new AbortController();
@@ -132,8 +141,8 @@ async function checkServer(quiet) {
       text.textContent = info.busy || info.queued ? `Server busy, ${info.queued + info.busy} in line` : 'Server ready';
     }
   } catch {
-    pill.dataset.state = 'waking'; text.textContent = 'Waking server'; server.state = 'waking';
-    setTimeout(() => checkServer(true), 8000);
+    pill.dataset.state = 'down'; text.textContent = 'Server offline'; server.state = 'down';
+    setTimeout(() => checkServer(true), 10000);
   }
 }
 
@@ -157,7 +166,7 @@ function setupSettings() {
       if (info.needs_key && !info.key_ok) status.textContent = 'Connected, but the access key is missing or wrong.';
       else status.textContent = `Connected. It splits songs into ${info.stems.join(', ')} (up to ${info.max_minutes} minutes).`;
     } catch {
-      status.textContent = "Couldn't connect. Check the address; a sleeping Hugging Face Space can take a minute to wake.";
+      status.textContent = "Couldn't connect. Check that the server window is open on your PC and the address matches the one it shows.";
     }
   });
   dlg.addEventListener('close', () => {
@@ -277,7 +286,7 @@ async function startJob(kind, payload) {
   showError('');
   if (job) return;
   if (!server.url) {
-    showError('No stem server is set up yet. Tap "Set up server" at the top right and paste your Hugging Face Space address.');
+    showError('Not connected to a MinusOne server yet. Double-click "Start MinusOne Server" on your PC; it opens this page already connected. On a phone, scan the QR code it shows.');
     return;
   }
   job = { cancelled: false };
@@ -333,7 +342,7 @@ function describe(s) {
   if (s.status === 'preparing') return { step: 'split', pct: 0, note: 'Preparing the audio' };
   if (s.status === 'separating') {
     const mins = s.duration ? Math.max(1, Math.round((s.duration * 1.2) / 60)) : null;
-    return { step: 'split', pct: s.progress, note: mins ? `The free server needs about ${mins} minute${mins > 1 ? 's' : ''} for this song. You can leave this tab open and practise something else.` : 'Splitting into instruments' };
+    return { step: 'split', pct: s.progress, note: 'Splitting into instruments. This takes about a minute on a fast PC, longer on an older one.' };
   }
   if (s.status === 'saving') return { step: 'split', pct: 100, note: 'Saving the stems' };
   return { step: 'load', pct: 0, note: '' };
@@ -352,7 +361,7 @@ async function pollJob(s) {
       fails = 0;
     } catch (err) {
       if (err.status === 404) throw err;
-      if (++fails > 30) throw new Error('Lost contact with the stem server. Try again in a minute; finished songs are kept on the server.');
+      if (++fails > 30) throw new Error('Lost contact with the MinusOne server. Check the server window on your PC; finished songs are kept there.');
       jobUI({ note: 'Lost contact with the server, retrying…' });
     }
   }

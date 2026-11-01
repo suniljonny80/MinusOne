@@ -24,22 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Point the website at your stem server
+      - name: Fill in website settings
         env:
-          HF_SPACE: ${{ vars.HF_SPACE }}
           SERVER_URL: ${{ vars.SERVER_URL }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
-          url="$SERVER_URL"
-          if [ -z "$url" ] && [ -n "$HF_SPACE" ]; then
-            # Hugging Face Space address: https://<owner>-<space>.hf.space
-            sub=$(echo "$HF_SPACE" | tr '[:upper:]' '[:lower:]' | sed 's#/#-#; s#[^a-z0-9-]#-#g')
-            url="https://${sub}.hf.space"
-          fi
-          echo "Server: ${url:-not set}"
           cat > site/config.js <<EOF
           window.MINUSONE_CONFIG = {
-            server: "${url}",
+            server: "${SERVER_URL}",
             repo: "${REPO_URL}",
           };
           EOF

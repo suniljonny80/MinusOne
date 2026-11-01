@@ -1,14 +1,3 @@
----
-title: MinusOne Stem Server
-emoji: 🎚️
-colorFrom: yellow
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
-short_description: Splits songs into vocals, drums, bass, guitar, keys, other
----
-
 # MinusOne stem server
 
 Backend for the MinusOne practice website. It downloads a song from a YouTube link (or takes an
@@ -23,5 +12,6 @@ uploaded file), splits it into six stems with [Demucs](https://github.com/adefos
 | `GET /api/jobs/{id}` | Progress of a song |
 | `GET /api/stems/{id}/{stem}.mp3` | Download one stem |
 
-Optional settings (Space → Settings → Variables and secrets): `ACCESS_KEY`, `YT_COOKIES`,
-`ALLOWED_ORIGINS`, `MAX_MINUTES`, `MAX_SONGS`. See the main repository README for details.
+On Windows, double-click **Start MinusOne Server.bat**. Optional settings (environment variables):
+`ACCESS_KEY`, `YT_COOKIES`, `ALLOWED_ORIGINS`, `MAX_MINUTES`, `MAX_SONGS`, `DATA_DIR`.
+See the main repository README for details.

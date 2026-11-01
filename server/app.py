@@ -47,7 +47,7 @@ MAX_UPLOAD = int(float(os.environ.get("MAX_UPLOAD_MB", "80")) * 1024 * 1024)
 MAX_SONGS = int(os.environ.get("MAX_SONGS", "40"))
 ACCESS_KEY = os.environ.get("ACCESS_KEY", "").strip()
 MOCK = os.environ.get("MOCK_SEPARATOR", "") == "1"
-DATA = Path(os.environ.get("DATA_DIR", "/tmp/minusone"))
+DATA = Path(os.environ.get("DATA_DIR") or (Path(__file__).resolve().parent / "data"))
 SONGS = DATA / "songs"
 WORK = DATA / "work"
 for d in (SONGS, WORK):
@@ -206,9 +206,9 @@ def to_wav(src, dst, limit=MAX_SECONDS):
     except subprocess.CalledProcessError as e:
         raise FriendlyError("That file couldn't be read as audio. Try an MP3, WAV, M4A or FLAC file.") from e
     try:
-        out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                   "-of", "default=nw=1:nk=1", str(dst)]).stdout.decode().strip()
-        return float(out)
+        import wave
+        with wave.open(str(dst), "rb") as w:
+            return w.getnframes() / float(w.getframerate())
     except Exception:
         return None
 

@@ -14,58 +14,46 @@ keys and other**, then mutes the instrument you play so you can drum, sing or ja
 - Works on phones, tablets and computers
 
 It costs nothing to run: the website is hosted on **GitHub Pages**, and the AI that splits songs
-([Demucs](https://github.com/adefossez/demucs) `htdemucs_6s`) runs on a free **Hugging Face Space**.
+([Demucs](https://github.com/adefossez/demucs) `htdemucs_6s`) runs on **your own Windows PC**. A free
+Cloudflare tunnel lets your phone, tablet or any other device use it too.
+
+**Website:** https://suniljonny80.github.io/minusone/
 
 ---
 
-## Set it up (one time, about 15 minutes)
+## Start the server on your PC
 
-### 1. Create the free stem server
+You need Windows 10/11 and [Python 3.12](https://www.python.org/downloads/) (tick *Add python.exe to PATH*
+when installing).
 
-1. Make a free account at [huggingface.co](https://huggingface.co/join).
-2. Create an access token: **Settings → Access Tokens → Create new token**, type **Write**. Copy it.
-3. In this GitHub repository open **Settings → Secrets and variables → Actions**:
-   - **Secrets** tab → *New repository secret* → name `HF_TOKEN`, value: the token.
-   - **Variables** tab → *New repository variable* → name `HF_SPACE`,
-     value: `your-hf-username/minusone`.
-4. Open the **Actions** tab → **Deploy stem server** → **Run workflow**.
+1. Download this repository (green **Code** button → **Download ZIP**) and unzip it.
+2. Open the `server` folder and double-click **Start MinusOne Server.bat**.
+   If Windows shows "Windows protected your PC", click **More info → Run anyway**.
+3. The first start installs everything it needs into `server\.venv` (5–15 minutes, about 2 GB with
+   PyTorch). Later starts take a few seconds.
+4. When it says **MinusOne is ready**, the website opens already connected, and a QR code opens.
+   **Scan the QR code with your phone** to use MinusOne there.
 
-The workflow creates the Space and uploads the server. Hugging Face then builds it, which takes about
-10 minutes the first time. Follow along at `https://huggingface.co/spaces/your-hf-username/minusone`.
+Keep the server window open while you practise; close it to stop. The tunnel address changes every time
+you start the server, so scan the new QR code (or open the new link) after a restart.
 
-### 2. Publish the website
-
-1. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. **Actions → Publish website → Run workflow**.
-
-Your site is live at `https://<your-github-username>.github.io/<repo-name>/`. It is automatically
-connected to your Space. (You can also change the server any time with the status button at the top
-right of the site.)
+**Speed:** with an NVIDIA graphics card a song splits in well under a minute; on a CPU it takes about
+1–3 minutes depending on the PC. Each song is split once: finished songs are kept in `server\data`
+and in your browser, so opening them again is instant.
 
 ---
 
 ## Good to know
 
-**Speed.** The free Space has 2 CPU cores, so splitting takes roughly as long as the song itself
-(a 4-minute song ≈ 4–6 minutes). Each song is only split once: the server keeps the last 40 songs and
-your browser keeps your songs, so opening them again is instant.
-
-**Sleeping.** A free Space goes to sleep after 48 hours without use. The site wakes it up
-automatically; the first song after a long break waits an extra minute or two.
-
-**YouTube blocking.** YouTube sometimes refuses downloads from cloud servers ("Sign in to confirm
-you're not a bot"). When that happens you can:
-- upload the audio file instead (always works), or
-- give the server your YouTube cookies: install a "Get cookies.txt" browser extension, export
-  cookies for youtube.com while signed in, and save the file's contents as a repository secret named
-  `YT_COOKIES`, then run **Deploy stem server** again. Use a spare Google account for this.
-
-**Keeping it private.** Anyone who knows your Space address could use it. To lock it, add a
-repository secret `SPACE_ACCESS_KEY` (any password), run **Deploy stem server** again, and enter the
-same key in the site's server settings on each of your devices.
+**YouTube blocking.** YouTube rarely blocks home internet connections, but if a video won't download,
+upload the audio file instead (always works). Very long videos (over 15 minutes) are refused.
 
 **Use it fairly.** MinusOne is for personal practice. Only split music you have the right to use, and
 respect YouTube's terms.
+
+**Other ways to host the server.** `server/Dockerfile` runs the same server on any Docker host
+(e.g. a cloud VM). Point the website at it with the status button at the top right, or set a
+repository variable `SERVER_URL` so the website uses it by default.
 
 ---
 
@@ -77,29 +65,32 @@ site/      the website (GitHub Pages): plain HTML, CSS and JavaScript, no build 
   engine.js         loads stems, transport, WAV export
   mixer-worklet.js  real-time mixer on the audio thread: keeps all stems sample-locked,
                     loops, and time-stretches with SoundTouch for speed/key changes
-server/    the stem server (Hugging Face Space, Docker)
-  app.py            FastAPI: YouTube download (yt-dlp) → Demucs → MP3 stems, job queue with progress
+server/    the stem server
+  app.py                     FastAPI: YouTube download (yt-dlp) → Demucs → MP3 stems, job queue with progress
+  Start MinusOne Server.bat  Windows one-click launcher (runs start-windows.ps1)
+  start-windows.ps1          installs everything, starts the server and a Cloudflare tunnel, opens the site
 .github/workflows/
-  pages.yml         publishes site/ to GitHub Pages and points it at your Space
-  space.yml         creates/updates the Hugging Face Space from server/
+  pages.yml         publishes site/ to GitHub Pages
 ```
 
 **Server API:** `GET /api/health`, `POST /api/split {"url": …}`, `POST /api/upload` (file),
 `GET /api/jobs/{id}`, `GET /api/stems/{id}/{stem}.mp3`.
 
-**Server settings** (Space → Settings → Variables and secrets): `MAX_MINUTES` (default 10),
+**Server settings** (environment variables): `MAX_MINUTES` (default 10; the Windows launcher uses 15),
 `MAX_SONGS` (40), `DEMUCS_MODEL` (`htdemucs_6s`; `htdemucs` gives 4 stems, slightly faster),
-`ACCESS_KEY`, `YT_COOKIES`, `ALLOWED_ORIGINS`.
+`ACCESS_KEY` (require a password), `YT_COOKIES` (Netscape cookies if YouTube blocks the server),
+`ALLOWED_ORIGINS`, `DATA_DIR`.
 
-**Run the server on your own computer instead** (faster with a good CPU or an NVIDIA GPU):
+**Run the server by hand** (Mac/Linux, or without the launcher):
 
 ```bash
 cd server
-pip install torch -r requirements.txt
-uvicorn app:app --host 0.0.0.0 --port 7860
+pip install torch -r requirements.txt     # also needs ffmpeg on PATH
+uvicorn app:app --port 7860
+cloudflared tunnel --url http://localhost:7860   # optional: reach it from other devices
 ```
 
-Then set the site's server address to `http://<your-computer-ip>:7860`.
+Then open `https://suniljonny80.github.io/minusone/?server=<the tunnel address>`.
 
 **Try the website locally:** `cd site && python -m http.server 8080`, then open http://localhost:8080.
 
