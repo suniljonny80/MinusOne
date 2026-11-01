@@ -1,4 +1,6 @@
 demucs==4.1.0
+# demucs imports numpy but does not declare it
+numpy
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
