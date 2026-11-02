@@ -73,7 +73,21 @@ function Test-TorchLoads {
   try { $out = & $Py -c "import torch; torch.zeros(2).sum().item(); print('ok')" 2>&1 } catch {}
   $code = $LASTEXITCODE
   $ErrorActionPreference = $old
+  $script:TorchError = (@($out) | ForEach-Object { "$_" } | Where-Object { $_ -match 'Error|error|DLL|dll' } | Select-Object -Last 3) -join "`n    "
   return ($code -eq 0)
+}
+function Remove-TorchCompletely {
+  # pip can leave files behind (for example NVIDIA libraries from an earlier GPU install).
+  # PyTorch loads every DLL in its folder, so one stale file breaks it. Delete the folder outright.
+  & $Py -m pip uninstall -y torch
+  $sp = Join-Path $Runtime 'Lib\site-packages'
+  foreach ($item in @((Join-Path $sp 'torch'), (Join-Path $sp 'functorch'), (Join-Path $sp 'torchgen'))) {
+    if (Test-Path $item) { Remove-Item -Recurse -Force $item -ErrorAction SilentlyContinue }
+  }
+  Get-ChildItem $sp -Directory -Filter 'torch-*.dist-info' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path (Join-Path $sp 'torch')) {
+    Fail 'Could not delete the old PyTorch folder (a file may be in use). Close MinusOne, restart the PC and run setup again.'
+  }
 }
 function Get-FreeGB {
   $d = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
@@ -81,19 +95,23 @@ function Get-FreeGB {
 }
 function Repair-Torch([switch]$CpuOnly) {
   if (Test-TorchLoads) { return }
-  Say "  PyTorch didn't load (usually a download that was cut short, or the USB filled up). Reinstalling it..." 'Yellow'
-  Say "  Free space on the USB: $(Get-FreeGB) GB" 'Gray'
-  & $Py -m pip uninstall -y torch
+  Say "  PyTorch didn't load:" 'Yellow'
+  Say "    $script:TorchError" 'DarkGray'
+  Say "  Removing it completely and reinstalling (free space: $(Get-FreeGB) GB)..." 'Yellow'
+  Remove-TorchCompletely
   Install-Torch -CpuOnly:$CpuOnly
   if (Test-TorchLoads) { Say '  PyTorch repaired.' 'Green'; return }
   if (-not $CpuOnly) {
-    Say "  The GPU version still won't load here, so switching to the processor version (slower, but it works)." 'Yellow'
-    & $Py -m pip uninstall -y torch
+    Say "  The GPU version still won't load:" 'Yellow'
+    Say "    $script:TorchError" 'DarkGray'
+    Say '  Switching to the processor version (slower, but it works)...' 'Yellow'
+    Remove-TorchCompletely
     Install-Torch -CpuOnly
     if (Test-TorchLoads) { Say '  Processor version of PyTorch installed.' 'Green'; return }
   }
-  Fail ("PyTorch still won't load. Free space on the USB: $(Get-FreeGB) GB. " +
-        "Free up some space (or use a bigger USB) and run setup again.")
+  Say ''
+  Say "  PyTorch error: $script:TorchError" 'DarkGray'
+  Fail 'PyTorch still will not load. Take a screenshot of this window and send it to Claude.'
 }
 
 
@@ -159,23 +177,25 @@ try {
   Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
   $env:PIP_NO_WARN_SCRIPT_LOCATION = '1'
   Say "  Free space on the USB: $(Get-FreeGB) GB" 'Gray'
-  Install-Torch -CpuOnly:$CpuOnly
-  Repair-Torch -CpuOnly:$CpuOnly
-  # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
-  # in pip's isolated mode, so install the build tools first and build it directly.
-  & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
-  & $Py -m pip install --no-cache-dir --no-build-isolation proxy_tools
-  if ($LASTEXITCODE -ne 0) { Fail 'Installing the app window helper failed. Run setup again.' }
-  & $Py -m pip install --upgrade --no-cache-dir -r (Join-Path $App 'server\requirements.txt') 'pywebview>=6' imageio-ffmpeg
 
-  # PyTorch needs Microsoft's Visual C++ runtime, which many PCs don't have. Keep a copy on the USB,
-  # next to python.exe, so it works on any PC (Microsoft allows shipping these files with an app).
+  # PyTorch needs Microsoft's Visual C++ runtime, which many PCs don't have. Put a copy on the USB
+  # next to python.exe BEFORE installing PyTorch, so it works on any PC (Microsoft allows this).
   & $Py -m pip install --upgrade --no-cache-dir msvc-runtime
   if ($LASTEXITCODE -ne 0) { Fail 'Installing the Visual C++ runtime failed. Run setup again.' }
   foreach ($dll in 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcruntime140_threads.dll') {
     $src = Join-Path $Runtime "Scripts\$dll"
     if (Test-Path $src) { Copy-Item $src (Join-Path $Runtime $dll) -Force }
   }
+
+  Install-Torch -CpuOnly:$CpuOnly
+  Repair-Torch -CpuOnly:$CpuOnly
+
+  # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
+  # in pip's isolated mode, so install the build tools first and build it directly.
+  & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
+  & $Py -m pip install --no-cache-dir --no-build-isolation proxy_tools
+  if ($LASTEXITCODE -ne 0) { Fail 'Installing the app window helper failed. Run setup again.' }
+  & $Py -m pip install --upgrade --no-cache-dir -r (Join-Path $App 'server\requirements.txt') 'pywebview>=6' imageio-ffmpeg
   if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and run setup again.' }
 
   # Free space: remove files PyTorch only needs for compiling C++ extensions, never for running.
