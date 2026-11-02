@@ -128,7 +128,41 @@ a { color: inherit; }
 
 /* desktop app: the server lives inside the app, so its status button is not needed */
 .desktop .server-pill { display: none; }
+@media (max-width: 520px) { .split-btn span { display: none; } .split-btn { padding: 0 10px; } }
 .desktop .topbar { padding-top: 16px; }
+
+/* top bar actions */
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.split-btn {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; color: var(--dim); font-size: 14px;
+}
+.split-btn:hover { color: var(--steel); }
+.split-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.split-btn[data-mode="cloud"] { color: var(--steel); }
+.split-btn[data-mode="gpu"] { color: var(--steel); }
+
+/* weak PC hint */
+.speed-hint {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-top: 18px; padding: 14px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--vocals); border-radius: var(--r-s);
+}
+.speed-hint p { margin: 0; flex: 1 1 320px; color: var(--dim); font-size: 15px; }
+.speed-hint strong { color: var(--steel); font-weight: 600; }
+
+/* splitting dialog */
+.choices { border: 0; margin: 4px 0 6px; padding: 0; display: grid; gap: 8px; }
+.choice { display: flex !important; gap: 12px; align-items: flex-start; margin: 0 !important; padding: 12px 14px;
+  background: var(--groove); border: 1px solid var(--line); border-radius: var(--r-s); cursor: pointer; font-weight: 400 !important; }
+.choice:has(input:checked) { border-color: var(--you); }
+.settings .choice input[type="radio"] {
+  flex: none; width: 18px; height: 18px; min-height: 0; margin: 3px 0 0; padding: 0;
+  background: none; border: 0; accent-color: var(--you);
+}
+.choice strong { display: block; color: var(--steel); font-weight: 650; }
+.choice small { display: block; color: var(--dim); font-size: 13.5px; line-height: 1.4; margin-top: 2px; }
+.settings .help { font-size: 13.5px; margin: 8px 0 0; }
+.settings .help a { color: var(--steel); }
 
 /* ---------- home ---------- */
 .view { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter) 64px; }

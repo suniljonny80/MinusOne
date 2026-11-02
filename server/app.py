@@ -122,6 +122,9 @@ def public_job(job, request: Optional[Request] = None):
                                    "source", "youtube_id", "error", "model")}
     out["device"] = DEVICE["name"]
     out["gpu"] = DEVICE["gpu"]
+    out["engine"] = job.get("engine")
+    out["cloud_model"] = job.get("cloud_model")
+    out["cloud_error"] = job.get("cloud_error")
     if job["status"] == "queued":
         with lock:
             ids = [j for j in queue]
@@ -245,8 +248,10 @@ def to_wav(src, dst, limit=MAX_SECONDS):
 def separate_demucs(job, wav, outdir):
     cmd = [sys.executable, "-m", "demucs", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
            "--filename", "{stem}.{ext}", "-o", str(outdir), str(wav)]
-    if not DEVICE["gpu"] and (os.cpu_count() or 1) >= 4:
-        cmd[3:3] = ["-j", "2"]      # CPU only: process two chunks in parallel
+    if not DEVICE["gpu"]:
+        cmd[3:3] = ["--overlap", "0.1"]          # CPU only: less overlap between chunks, ~15% faster
+        if (os.cpu_count() or 1) >= 4:
+            cmd[3:3] = ["-j", "2"]               # and process two chunks in parallel
     threads = os.cpu_count() or 2
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), MKL_NUM_THREADS=str(threads))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
@@ -290,6 +295,172 @@ def separate_mock(job, wav, outdir):
     return out
 
 
+# ---------------------------------------------------------------- splitting engines & settings
+#   local  = Demucs on this computer (NVIDIA GPU when available, otherwise the processor)
+#   cloud  = MVSEP (mvsep.com) cloud GPUs with the user's free API key; this PC does almost nothing
+#   auto   = local on an NVIDIA GPU, cloud when there is no GPU but a key and internet, else local
+
+SETTINGS_PATH = DATA / "settings.json"
+MVSEP_API = os.environ.get("MVSEP_API", "https://mvsep.com/api").rstrip("/")
+CLOUD_MODELS = [   # tried in order; both give vocals, drums, bass, guitar, piano, other
+    {"sep_type": "63", "label": "BS-RoFormer SW"},
+    {"sep_type": "20", "add_opt1": "2", "label": "Demucs 6-stem"},
+]
+
+
+def load_settings():
+    try:
+        return {"engine": "auto", "mvsep_token": "", **json.loads(SETTINGS_PATH.read_text())}
+    except Exception:
+        return {"engine": "auto", "mvsep_token": ""}
+
+
+SETTINGS = load_settings()
+
+
+def save_settings():
+    SETTINGS_PATH.write_text(json.dumps(SETTINGS))
+
+
+def cloud_token():
+    return (os.environ.get("MVSEP_TOKEN", "") or SETTINGS.get("mvsep_token", "")).strip()
+
+
+def online():
+    import socket
+    from urllib.parse import urlparse
+    u = urlparse(MVSEP_API)
+    try:
+        socket.create_connection((u.hostname, u.port or (443 if u.scheme == "https" else 80)), timeout=4).close()
+        return True
+    except OSError:
+        return False
+
+
+def choose_engine(wait=True):
+    pref = SETTINGS.get("engine", "auto")
+    if pref == "local":
+        return "local"
+    if pref == "cloud":
+        return "cloud" if cloud_token() else "local"
+    if wait:                                    # auto: need to know whether there is a GPU first
+        for _ in range(120):
+            if DEVICE["name"] != "checking":
+                break
+            time.sleep(0.5)
+    if DEVICE["gpu"]:
+        return "local"
+    if cloud_token() and (not wait or online()):
+        return "cloud"
+    return "local"
+
+
+STEM_WORDS = [("drums", r"drum"), ("bass", r"bass"), ("guitar", r"guitar"), ("piano", r"piano|keys|keyboard"),
+              ("other", r"other"), ("vocals", r"vocal|voice|sing")]
+
+
+def match_stem(text):
+    t = text.lower()
+    if re.search(r"instrum|no[_ -]?vocal|karaoke|backing", t):
+        return None
+    for name, pat in STEM_WORDS:
+        if re.search(pat, t):
+            return name
+    return None
+
+
+def separate_cloud(job, wav, outdir):
+    import requests
+    from urllib.parse import unquote, urlparse
+    token = cloud_token()
+    outdir.mkdir(parents=True, exist_ok=True)
+    mp3 = outdir / "upload.mp3"
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-b:a", "320k", str(mp3)])
+    update(job, stage="Sending the song to the cloud splitter", progress=2)
+
+    hash_, used, last = None, None, ""
+    for model in CLOUD_MODELS:
+        data = {"api_token": token, "sep_type": model["sep_type"], "output_format": "0"}
+        if "add_opt1" in model:
+            data["add_opt1"] = model["add_opt1"]
+        try:
+            with open(mp3, "rb") as f:
+                r = requests.post(f"{MVSEP_API}/separation/create", data=data,
+                                  files={"audiofile": ("song.mp3", f, "audio/mpeg")}, timeout=600)
+            j = r.json()
+        except requests.RequestException as e:
+            raise FriendlyError(f"Couldn't reach the cloud splitter ({e.__class__.__name__}).")
+        except ValueError:
+            raise FriendlyError(f"The cloud splitter answered with an error ({r.status_code}).")
+        if j.get("success"):
+            hash_, used = j["data"]["hash"], model
+            break
+        last = str((j.get("data") or {}).get("message") or j.get("message") or j)[:200]
+        if re.search(r"token|api key|unauthor|not.*registered|login", last, re.I):
+            raise FriendlyError("MVSEP didn't accept your key. Check it in Splitting settings.")
+    if not hash_:
+        raise FriendlyError("The cloud splitter refused this song: " + last)
+    update(job, cloud_model=used["label"], model="cloud: " + used["label"],
+           stage="Waiting in the cloud splitter's queue", progress=5)
+
+    t0 = started = time.time()
+    while True:
+        time.sleep(4)
+        try:
+            g = requests.get(f"{MVSEP_API}/separation/get", params={"hash": hash_}, timeout=60).json()
+        except Exception:
+            if time.time() - t0 > 3600:
+                raise FriendlyError("Lost contact with the cloud splitter.")
+            continue
+        d = g.get("data") or {}
+        status = (g.get("status") or d.get("status") or "").lower()
+        if status == "done":
+            files = d.get("files") or []
+            break
+        if status in ("failed", "not_found", "error"):
+            raise FriendlyError("The cloud splitter couldn't split this song" +
+                                (": " + str(d.get("message"))[:150] if d.get("message") else "."))
+        if status == "waiting":
+            started = time.time()
+            update(job, stage="Waiting in the cloud splitter's queue", progress=5)
+        else:   # processing / distributing / merging
+            elapsed = time.time() - started
+            update(job, stage=f"Splitting on the cloud GPUs ({used['label']})",
+                   progress=min(95, 10 + int(elapsed * 1.5)))
+        if time.time() - t0 > 3 * 3600:
+            raise FriendlyError("The cloud splitter is taking too long. Try again later.")
+
+    update(job, stage="Downloading the instruments from the cloud", progress=96)
+    out = {}
+    for f in files:
+        if isinstance(f, dict):
+            url = f.get("url") or f.get("download") or f.get("link") or ""
+            label = " ".join(str(f.get(k, "")) for k in ("type", "name", "download"))
+        else:
+            url, label = str(f), ""
+        if not url.startswith("http"):
+            continue
+        stem = match_stem(label + " " + unquote(urlparse(url).path.rsplit("/", 1)[-1]))
+        if not stem or stem in out:
+            continue
+        dst = outdir / f"{stem}.mp3"
+        with requests.get(url, stream=True, timeout=300) as resp:
+            resp.raise_for_status()
+            with open(dst, "wb") as fh:
+                for chunk in resp.iter_content(1 << 16):
+                    fh.write(chunk)
+        out[stem] = dst
+    if not out:
+        raise FriendlyError("The cloud splitter finished but returned no instruments.")
+    for name, _ in STEMS:                       # any part the model didn't produce: silent track
+        if name not in out:
+            dst = outdir / f"{name}.mp3"
+            run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                 "-t", str(job.get("duration") or 1), "-b:a", "64k", str(dst)])
+            out[name] = dst
+    return out
+
+
 def process(job):
     sid = job["id"]
     work = WORK / sid
@@ -307,8 +478,19 @@ def process(job):
         if dur and not job.get("duration"):
             update(job, duration=round(dur))
 
-        update(job, status="separating", stage="Splitting into instruments", progress=0)
-        stems = (separate_mock if MOCK else separate_demucs)(job, wav, work / "out")
+        engine = choose_engine()
+        update(job, status="separating", stage="Splitting into instruments", progress=0, engine=engine)
+        stems = None
+        if engine == "cloud":
+            try:
+                stems = separate_cloud(job, wav, work / "cloud")
+            except FriendlyError as e:
+                print("cloud split failed, using this PC:", e, flush=True)
+                update(job, engine="local", progress=0, cloud_error=str(e),
+                       stage="Cloud splitter unavailable (" + str(e)[:80] + "). Splitting on this PC instead")
+        if stems is None:
+            update(job, engine="local")
+            stems = (separate_mock if MOCK else separate_demucs)(job, wav, work / "out")
 
         update(job, status="saving", stage="Saving stems", progress=100)
         final = song_dir(sid)
@@ -387,7 +569,35 @@ def health(x_access_key: str = Header(default="")):
     return {"ok": True, "model": MODEL, "stems": [w for _, w in STEMS], "busy": busy, "queued": waiting,
             "max_minutes": MAX_SECONDS // 60, "needs_key": bool(ACCESS_KEY),
             "key_ok": (not ACCESS_KEY) or x_access_key == ACCESS_KEY, "mock": MOCK,
-            "device": DEVICE["name"], "gpu": DEVICE["gpu"]}
+            "device": DEVICE["name"], "gpu": DEVICE["gpu"],
+            "engine_pref": SETTINGS.get("engine", "auto"), "cloud_key": bool(cloud_token()),
+            "will_use": choose_engine(wait=False) if DEVICE["name"] != "checking" else "checking"}
+
+
+class SettingsRequest(BaseModel):
+    engine: Optional[str] = None
+    mvsep_token: Optional[str] = None
+
+
+@app.get("/api/settings")
+def get_settings(x_access_key: str = Header(default="")):
+    check_key(x_access_key)
+    tok = cloud_token()
+    return {"engine": SETTINGS.get("engine", "auto"), "cloud_key": bool(tok),
+            "key_hint": ("…" + tok[-4:]) if len(tok) >= 4 else "", "device": DEVICE["name"], "gpu": DEVICE["gpu"]}
+
+
+@app.post("/api/settings")
+def set_settings(req: SettingsRequest, x_access_key: str = Header(default="")):
+    check_key(x_access_key)
+    if req.engine is not None:
+        if req.engine not in ("auto", "local", "cloud"):
+            raise HTTPException(400, "Unknown splitting choice.")
+        SETTINGS["engine"] = req.engine
+    if req.mvsep_token is not None:
+        SETTINGS["mvsep_token"] = req.mvsep_token.strip()
+    save_settings()
+    return get_settings(x_access_key)
 
 
 @app.post("/api/split")

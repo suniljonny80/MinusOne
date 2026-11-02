@@ -68,6 +68,22 @@ desktop/
 
 ---
 
+## Fast splitting on any PC
+
+MinusOne picks the fastest way to split each song (the **Splitting** button at the top):
+
+| This PC | Splits on | Typical time |
+| --- | --- | --- |
+| NVIDIA graphics card | this PC's GPU | under a minute |
+| Integrated graphics / Celeron / older PC, online | MVSEP's cloud GPUs (free key) | a few minutes, depends on their queue |
+| Weak PC, offline | this PC's processor (faster settings) | 10 to 30 minutes |
+
+To use the cloud, sign up free at [mvsep.com](https://mvsep.com/), copy your API token from your account,
+and paste it under **Splitting**. The key is saved with MinusOne (on the USB for the portable app), so you
+add it once. If the cloud is unreachable or refuses a song, MinusOne splits on the PC instead.
+
+---
+
 ## Good to know
 
 **YouTube blocking.** YouTube rarely blocks home internet connections, but if a video won't download,

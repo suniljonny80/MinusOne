@@ -20,9 +20,15 @@
       <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="4" width="4" height="24" rx="2"/><rect x="14" y="4" width="4" height="24" rx="2"/><rect x="24" y="4" width="4" height="24" rx="2"/><rect class="cap" x="1" y="17" width="10" height="5" rx="1.5"/><rect class="cap" x="11" y="8" width="10" height="5" rx="1.5"/><rect class="cap off" x="21" y="22" width="10" height="5" rx="1.5"/></svg>
       <span>MinusOne</span>
     </a>
+    <div class="top-actions">
+    <button class="split-btn" id="splitSettingsButton" type="button" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      <span id="splitModeText">Splitting</span>
+    </button>
     <button class="server-pill" id="serverPill" type="button" aria-haspopup="dialog">
       <span class="dot" aria-hidden="true"></span><span id="serverText">Checking server</span>
     </button>
+    </div>
   </header>
 
   <main id="main">
@@ -48,6 +54,10 @@
           <input id="fileInput" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.opus,.aac" hidden>
         </div>
         <p class="form-error" id="formError" role="alert" hidden></p>
+        <div class="speed-hint" id="speedHint" hidden>
+          <p><strong>This PC has no NVIDIA graphics card</strong>, so splitting here can take 10 to 30 minutes. Add a free cloud key once and songs split on fast cloud GPUs instead, usually in a few minutes.</p>
+          <button class="btn btn-quiet" type="button" id="speedHintButton">Set up fast splitting</button>
+        </div>
       </form>
 
       <section class="job" id="job" aria-live="polite" hidden>
@@ -144,6 +154,30 @@
   <div class="loading" id="loading" hidden><div class="loading-card"><p id="loadingText">Loading</p><div class="bar"><span id="loadingBar"></span></div></div></div>
   <div class="drop" id="drop" hidden><p>Drop the song to split it</p></div>
   <div class="toast" id="toast" role="status" hidden></div>
+
+  <dialog class="settings" id="splitSettings" aria-labelledby="splitSettingsTitle">
+    <form method="dialog" id="splitSettingsForm">
+      <h2 id="splitSettingsTitle">Splitting</h2>
+      <p id="splitDevice">Checking this PC…</p>
+      <fieldset class="choices">
+        <legend class="sr">Where to split songs</legend>
+        <label class="choice"><input type="radio" name="engine" value="auto" checked>
+          <span><strong>Fastest available</strong><small>This PC's NVIDIA card if it has one, otherwise the cloud (when a key is added), otherwise this PC's processor.</small></span></label>
+        <label class="choice"><input type="radio" name="engine" value="cloud">
+          <span><strong>Always in the cloud</strong><small>Fast on any PC. Needs internet; songs are sent to MVSEP for splitting.</small></span></label>
+        <label class="choice"><input type="radio" name="engine" value="local">
+          <span><strong>Always on this PC</strong><small>Works offline. Fast with an NVIDIA card, slow without one.</small></span></label>
+      </fieldset>
+      <label for="mvsepKey">Free cloud key (MVSEP API token)</label>
+      <input id="mvsepKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your token">
+      <p class="help">Sign up free at <a href="https://mvsep.com/" target="_blank" rel="noopener">mvsep.com</a>, then copy the API token from your account (see <a href="https://mvsep.com/full_api" target="_blank" rel="noopener">their API page</a>). Free accounts split one song at a time; at busy times there can be a queue.</p>
+      <p class="settings-status" id="splitStatus" role="status"></p>
+      <div class="settings-actions">
+        <button class="btn btn-quiet" value="cancel" type="submit" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" value="save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog class="settings" id="settings" aria-labelledby="settingsTitle">
     <form method="dialog" id="settingsForm">

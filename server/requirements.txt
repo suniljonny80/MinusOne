@@ -4,6 +4,7 @@ numpy
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
+requests
 yt-dlp[default]
 # yt-dlp needs a JavaScript runtime to read YouTube pages
 deno

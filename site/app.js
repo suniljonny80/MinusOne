@@ -137,6 +137,8 @@ async function checkServer(quiet) {
     if (!res.ok) throw new Error(String(res.status));
     const info = await res.json();
     server.info = info;
+    renderSplitMode(info);
+    if (info.will_use === 'checking') setTimeout(() => checkServer(true), 3000);
     if (info.needs_key && !info.key_ok) {
       pill.dataset.state = 'down'; text.textContent = 'Needs access key'; server.state = 'key';
     } else {
@@ -178,6 +180,62 @@ function setupSettings() {
     store.set('key', $('#serverKey').value.trim());
     server.load();
     checkServer();
+  });
+}
+
+// ------------------------------------------------------------------ splitting settings
+const split = { info: null };
+
+function renderSplitMode(h) {
+  const btn = $('#splitSettingsButton'), text = $('#splitModeText');
+  const hint = $('#speedHint');
+  if (!h) { text.textContent = 'Splitting'; btn.dataset.mode = ''; hint.hidden = true; return; }
+  const use = h.will_use;
+  if (use === 'cloud') { text.textContent = 'Splitting: cloud'; btn.dataset.mode = 'cloud'; }
+  else if (h.gpu) { text.textContent = 'Splitting: GPU'; btn.dataset.mode = 'gpu'; }
+  else if (use === 'checking') { text.textContent = 'Splitting'; btn.dataset.mode = ''; }
+  else { text.textContent = 'Splitting: this PC'; btn.dataset.mode = 'cpu'; }
+  // weak PC with no cloud key: offer the fast option
+  hint.hidden = !(use === 'local' && !h.gpu && !h.cloud_key && h.device && h.device !== 'checking' && !h.mock);
+}
+
+async function openSplitSettings() {
+  const dlg = $('#splitSettings'), status = $('#splitStatus');
+  status.textContent = '';
+  $('#splitDevice').textContent = 'Checking this PC…';
+  dlg.showModal();
+  try {
+    const st = await server.call('/api/settings');
+    dlg.querySelectorAll('input[name="engine"]').forEach((r) => { r.checked = r.value === st.engine; });
+    $('#mvsepKey').value = '';
+    $('#mvsepKey').placeholder = st.cloud_key ? `Key saved (${st.key_hint}). Paste a new one to replace it` : 'Paste your token';
+    $('#splitDevice').textContent = st.gpu
+      ? `This PC has an ${st.device}, so it splits songs itself in under a minute.`
+      : 'This PC has no NVIDIA graphics card, so splitting here is slow. The cloud is the fast option.';
+  } catch (err) {
+    $('#splitDevice').textContent = err.message;
+  }
+}
+
+function setupSplitSettings() {
+  $('#splitSettingsButton').addEventListener('click', openSplitSettings);
+  $('#speedHintButton').addEventListener('click', () => {
+    openSplitSettings().then(() => $('#mvsepKey').focus());
+  });
+  const dlg = $('#splitSettings');
+  dlg.addEventListener('close', async () => {
+    if (dlg.returnValue !== 'save') return;
+    const engine = dlg.querySelector('input[name="engine"]:checked')?.value || 'auto';
+    const body = { engine };
+    const key = $('#mvsepKey').value.trim();
+    if (key) body.mvsep_token = key;
+    try {
+      await server.call('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      toast(engine === 'cloud' || (engine === 'auto' && key) ? 'Saved. New songs will split in the cloud when this PC has no NVIDIA card.' : 'Splitting settings saved');
+      checkServer(true);
+    } catch (err) {
+      toast("Couldn't save: " + err.message);
+    }
   });
 }
 
@@ -346,8 +404,10 @@ function describe(s) {
   if (s.status === 'separating') {
     const mins = s.duration ? Math.max(1, Math.round((s.duration * 1.2) / 60)) : null;
     let note = 'Splitting into instruments.';
-    if (s.gpu) note = `Splitting on your ${s.device}. This usually takes under a minute.`;
-    else if (s.device && s.device !== 'checking') note = 'Splitting on the processor (no NVIDIA graphics card in use). This can take several minutes.';
+    if (s.engine === 'cloud') note = `${s.stage}. Your PC is free to do other things meanwhile.`;
+    else if (s.cloud_error) note = s.stage + '.';
+    else if (s.gpu) note = `Splitting on your ${s.device}. This usually takes under a minute.`;
+    else if (s.device && s.device !== 'checking') note = 'Splitting on this PC\'s processor. Without an NVIDIA card this can take 10 to 30 minutes. Add a free cloud key under Splitting to make it much faster.';
     return { step: 'split', pct: s.progress, note };
   }
   if (s.status === 'saving') return { step: 'split', pct: 100, note: 'Saving the stems' };
@@ -921,6 +981,7 @@ if (DESKTOP) {
 setYou(you, false);
 setupPicker();
 setupSettings();
+setupSplitSettings();
 setupSplitForm();
 setupOverview();
 setupTools();
