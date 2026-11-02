@@ -68,26 +68,34 @@ YT_ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/|v
 
 # ---------------------------------------------------------------- device (GPU or CPU)
 
-DEVICE = {"name": "checking", "gpu": False}
+DEVICE = {"name": "checking", "gpu": False, "kind": "cpu"}
+
+
+RUNNER = Path(__file__).resolve().parent / "split_runner.py"
 
 
 def detect_device():
-    """Find out (without loading torch into this process) whether Demucs will use an NVIDIA GPU."""
+    """Find the fastest device for Demucs: NVIDIA (CUDA), then any DirectX 12 GPU (DirectML), then CPU.
+    Each check runs in a separate process because a PyTorch build can't be unloaded once loaded."""
     if MOCK:
-        DEVICE.update(name="test mode", gpu=False)
+        DEVICE.update(name="test mode", gpu=False, kind="cpu")
         return
-    code = ("import torch\n"
-            "print(('GPU:' + torch.cuda.get_device_name(0)) if torch.cuda.is_available() else "
-            "('CPU:cuda-build' if torch.version.cuda else 'CPU:cpu-build'))")
-    try:
-        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=180).stdout.strip()
-        kind, _, name = out.partition(":")
-        if kind == "GPU":
-            DEVICE.update(name=name, gpu=True)
-        else:
-            DEVICE.update(name="processor (CPU)", gpu=False, build=name)
-    except Exception as e:
-        DEVICE.update(name="processor (CPU)", gpu=False, error=str(e)[:200])
+    notes = []
+    for kind in ("cuda", "dml"):
+        try:
+            out = subprocess.run([sys.executable, str(RUNNER), "--detect", kind], capture_output=True,
+                                 text=True, timeout=240).stdout.strip().splitlines()
+            info = json.loads(out[-1]) if out else {}
+        except Exception as e:
+            info = {"kind": "none", "error": str(e)[:200]}
+        if info.get("kind") == kind:
+            DEVICE.update(name=info.get("name") or kind.upper(), gpu=True, kind=kind,
+                          index=info.get("index"))
+            print("Demucs device:", DEVICE, flush=True)
+            return
+        if info.get("error"):
+            notes.append(f"{kind}: {info['error']}")
+    DEVICE.update(name="processor (CPU)", gpu=False, kind="cpu", notes=notes)
     print("Demucs device:", DEVICE, flush=True)
 
 
@@ -122,6 +130,7 @@ def public_job(job, request: Optional[Request] = None):
                                    "source", "youtube_id", "error", "model")}
     out["device"] = DEVICE["name"]
     out["gpu"] = DEVICE["gpu"]
+    out["accel"] = DEVICE.get("kind")
     out["engine"] = job.get("engine")
     out["cloud_model"] = job.get("cloud_model")
     out["cloud_error"] = job.get("cloud_error")
@@ -246,14 +255,19 @@ def to_wav(src, dst, limit=MAX_SECONDS):
 
 
 def separate_demucs(job, wav, outdir):
-    cmd = [sys.executable, "-m", "demucs", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
+    kind = DEVICE.get("kind", "cpu")
+    cmd = [sys.executable, str(RUNNER), "--accel", kind, "--", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
            "--filename", "{stem}.{ext}", "-o", str(outdir), str(wav)]
+    if kind == "dml":
+        cmd[5:5] = ["--overlap", "0.15"]         # integrated GPUs: a little less overlap, ~10% faster
     if not DEVICE["gpu"]:
-        cmd[3:3] = ["--overlap", "0.1"]          # CPU only: less overlap between chunks, ~15% faster
+        cmd[5:5] = ["--overlap", "0.1"]          # CPU only: less overlap between chunks, ~15% faster
         if (os.cpu_count() or 1) >= 4:
-            cmd[3:3] = ["-j", "2"]               # and process two chunks in parallel
+            cmd[5:5] = ["-j", "2"]               # and process two chunks in parallel
     threads = os.cpu_count() or 2
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), MKL_NUM_THREADS=str(threads))
+    if DEVICE.get("index") is not None:
+        env["MINUSONE_DML_INDEX"] = str(DEVICE["index"])
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     pct = re.compile(rb"(\d{1,3})%\|")
     tail = deque(maxlen=30)
@@ -569,7 +583,7 @@ def health(x_access_key: str = Header(default="")):
     return {"ok": True, "model": MODEL, "stems": [w for _, w in STEMS], "busy": busy, "queued": waiting,
             "max_minutes": MAX_SECONDS // 60, "needs_key": bool(ACCESS_KEY),
             "key_ok": (not ACCESS_KEY) or x_access_key == ACCESS_KEY, "mock": MOCK,
-            "device": DEVICE["name"], "gpu": DEVICE["gpu"],
+            "device": DEVICE["name"], "gpu": DEVICE["gpu"], "accel": DEVICE.get("kind"),
             "engine_pref": SETTINGS.get("engine", "auto"), "cloud_key": bool(cloud_token()),
             "will_use": choose_engine(wait=False) if DEVICE["name"] != "checking" else "checking"}
 

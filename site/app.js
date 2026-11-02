@@ -196,7 +196,7 @@ function renderSplitMode(h) {
   else if (use === 'checking') { text.textContent = 'Splitting'; btn.dataset.mode = ''; }
   else { text.textContent = 'Splitting: this PC'; btn.dataset.mode = 'cpu'; }
   // weak PC with no cloud key: offer the fast option
-  hint.hidden = !(use === 'local' && !h.gpu && !h.cloud_key && h.device && h.device !== 'checking' && !h.mock);
+  hint.hidden = true;
 }
 
 async function openSplitSettings() {
@@ -210,8 +210,8 @@ async function openSplitSettings() {
     $('#mvsepKey').value = '';
     $('#mvsepKey').placeholder = st.cloud_key ? `Key saved (${st.key_hint}). Paste a new one to replace it` : 'Paste your token';
     $('#splitDevice').textContent = st.gpu
-      ? `This PC has an ${st.device}, so it splits songs itself in under a minute.`
-      : 'This PC has no NVIDIA graphics card, so splitting here is slow. The cloud is the fast option.';
+      ? `Songs split on this PC's graphics: ${st.device}.`
+      : 'No usable graphics chip found on this PC, so songs split on the processor (slow).';
   } catch (err) {
     $('#splitDevice').textContent = err.message;
   }
@@ -406,8 +406,9 @@ function describe(s) {
     let note = 'Splitting into instruments.';
     if (s.engine === 'cloud') note = `${s.stage}. Your PC is free to do other things meanwhile.`;
     else if (s.cloud_error) note = s.stage + '.';
-    else if (s.gpu) note = `Splitting on your ${s.device}. This usually takes under a minute.`;
-    else if (s.device && s.device !== 'checking') note = 'Splitting on this PC\'s processor. Without an NVIDIA card this can take 10 to 30 minutes. Add a free cloud key under Splitting to make it much faster.';
+    else if (s.gpu && s.accel === 'cuda') note = `Splitting on your ${s.device}. This usually takes under a minute.`;
+    else if (s.gpu) note = `Splitting on this PC's graphics (${s.device}). Much faster than the processor; how fast depends on the graphics chip.`;
+    else if (s.device && s.device !== 'checking') note = 'Splitting on this PC\'s processor, because no usable graphics chip was found. This can take 10 to 30 minutes.';
     return { step: 'split', pct: s.progress, note };
   }
   if (s.status === 'saving') return { step: 'split', pct: 100, note: 'Saving the stems' };

@@ -1,6 +1,6 @@
 demucs==4.1.0
-# demucs imports numpy but does not declare it
-numpy
+# demucs imports numpy but does not declare it (<2.3 keeps it compatible with the DirectML PyTorch)
+numpy>=1.26,<2.3
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9

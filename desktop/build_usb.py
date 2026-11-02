@@ -41,7 +41,7 @@ def main():
     shutil.copy(REPO / "desktop" / "Set up USB.bat", OUT / "Set up USB.bat")
     for f in ("desktop.py", "setup-usb.ps1", "minusone.ico"):
         shutil.copy(REPO / "desktop" / "app" / f, OUT / "app" / f)
-    for f in ("app.py", "requirements.txt"):
+    for f in ("app.py", "requirements.txt", "split_runner.py"):
         shutil.copy(REPO / "server" / f, OUT / "app" / "server" / f)
     shutil.copytree(REPO / "site", OUT / "app" / "site")
     (OUT / "README.txt").write_text(README.replace("\n", "\r\n"), encoding="utf-8")

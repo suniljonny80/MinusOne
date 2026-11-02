@@ -70,17 +70,14 @@ desktop/
 
 ## Fast splitting on any PC
 
-MinusOne picks the fastest way to split each song (the **Splitting** button at the top):
+MinusOne splits songs on the PC's **graphics chip**, whatever it is, using Microsoft DirectML:
+Intel UHD / Iris / Arc, AMD Radeon or NVIDIA. NVIDIA PCs also get NVIDIA's own CUDA engine (the
+fastest) when the USB has room for it (about 6.5 GB free). Only a PC with no usable graphics chip
+falls back to the processor. How fast it is depends on the chip: a dedicated NVIDIA/AMD card splits a
+song in about a minute; integrated graphics are slower but still well ahead of the processor.
 
-| This PC | Splits on | Typical time |
-| --- | --- | --- |
-| NVIDIA graphics card | this PC's GPU | under a minute |
-| Integrated graphics / Celeron / older PC, online | MVSEP's cloud GPUs (free key) | a few minutes, depends on their queue |
-| Weak PC, offline | this PC's processor (faster settings) | 10 to 30 minutes |
-
-To use the cloud, sign up free at [mvsep.com](https://mvsep.com/), copy your API token from your account,
-and paste it under **Splitting**. The key is saved with MinusOne (on the USB for the portable app), so you
-add it once. If the cloud is unreachable or refuses a song, MinusOne splits on the PC instead.
+An optional cloud splitter (MVSEP, free key) can be turned on under **Splitting**; it is off unless a
+key is added.
 
 ---
 
