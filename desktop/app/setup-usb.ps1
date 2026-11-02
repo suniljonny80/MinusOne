@@ -65,6 +65,38 @@ function Install-Torch([switch]$CpuOnly) {
   if ($LASTEXITCODE -ne 0) { Fail 'Installing PyTorch failed. Check your internet connection and try again.' }
 }
 
+function Test-TorchLoads {
+  # Actually load PyTorch (and its NVIDIA libraries on the GPU version) to catch broken installs.
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $out = $null
+  try { $out = & $Py -c "import torch; torch.zeros(2).sum().item(); print('ok')" 2>&1 } catch {}
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $old
+  return ($code -eq 0)
+}
+function Get-FreeGB {
+  $d = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
+  if ($d) { return [math]::Round($d.Free / 1GB, 1) } else { return 99 }
+}
+function Repair-Torch([switch]$CpuOnly) {
+  if (Test-TorchLoads) { return }
+  Say "  PyTorch didn't load (usually a download that was cut short, or the USB filled up). Reinstalling it..." 'Yellow'
+  Say "  Free space on the USB: $(Get-FreeGB) GB" 'Gray'
+  & $Py -m pip uninstall -y torch
+  Install-Torch -CpuOnly:$CpuOnly
+  if (Test-TorchLoads) { Say '  PyTorch repaired.' 'Green'; return }
+  if (-not $CpuOnly) {
+    Say "  The GPU version still won't load here, so switching to the processor version (slower, but it works)." 'Yellow'
+    & $Py -m pip uninstall -y torch
+    Install-Torch -CpuOnly
+    if (Test-TorchLoads) { Say '  Processor version of PyTorch installed.' 'Green'; return }
+  }
+  Fail ("PyTorch still won't load. Free space on the USB: $(Get-FreeGB) GB. " +
+        "Free up some space (or use a bigger USB) and run setup again.")
+}
+
+
 
 Say ''
 Say '  MinusOne USB setup' 'White'
@@ -126,7 +158,9 @@ try {
   # -------------------------------------------------------------- 3. packages
   Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
   $env:PIP_NO_WARN_SCRIPT_LOCATION = '1'
+  Say "  Free space on the USB: $(Get-FreeGB) GB" 'Gray'
   Install-Torch -CpuOnly:$CpuOnly
+  Repair-Torch -CpuOnly:$CpuOnly
   # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
   # in pip's isolated mode, so install the build tools first and build it directly.
   & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
@@ -158,6 +192,7 @@ try {
 
   # -------------------------------------------------------------- 5. AI model
   Step 5 'Instrument-splitting AI model (about 80 MB)'
+  Repair-Torch -CpuOnly:$CpuOnly
   $env:HF_HOME = Join-Path $Models 'hf'
   $env:TORCH_HOME = Join-Path $Models 'torch'
   & $Py -c "from demucs.pretrained import get_model; get_model('$Model'); print('  model ready')"
