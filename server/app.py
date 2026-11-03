@@ -131,6 +131,7 @@ def public_job(job, request: Optional[Request] = None):
     out["device"] = DEVICE["name"]
     out["gpu"] = DEVICE["gpu"]
     out["accel"] = DEVICE.get("kind")
+    out["device_notes"] = DEVICE.get("notes") or []
     out["engine"] = job.get("engine")
     out["cloud_model"] = job.get("cloud_model")
     out["cloud_error"] = job.get("cloud_error")
@@ -324,9 +325,9 @@ CLOUD_MODELS = [   # tried in order; both give vocals, drums, bass, guitar, pian
 
 def load_settings():
     try:
-        return {"engine": "auto", "mvsep_token": "", **json.loads(SETTINGS_PATH.read_text())}
+        return {"engine": "gpu", "mvsep_token": "", **json.loads(SETTINGS_PATH.read_text())}
     except Exception:
-        return {"engine": "auto", "mvsep_token": ""}
+        return {"engine": "gpu", "mvsep_token": ""}     # default: graphics chip only, never the processor
 
 
 SETTINGS = load_settings()
@@ -352,9 +353,9 @@ def online():
 
 
 def choose_engine(wait=True):
-    pref = SETTINGS.get("engine", "auto")
-    if pref == "local":
-        return "local"
+    pref = SETTINGS.get("engine", "gpu")
+    if pref in ("local", "gpu"):
+        return pref
     if pref == "cloud":
         return "cloud" if cloud_token() else "local"
     if wait:                                    # auto: need to know whether there is a GPU first
@@ -502,6 +503,16 @@ def process(job):
                 print("cloud split failed, using this PC:", e, flush=True)
                 update(job, engine="local", progress=0, cloud_error=str(e),
                        stage="Cloud splitter unavailable (" + str(e)[:80] + "). Splitting on this PC instead")
+        if stems is None and engine == "gpu":
+            for _ in range(240):                     # device check may still be running
+                if DEVICE["name"] != "checking":
+                    break
+                time.sleep(0.5)
+            if not DEVICE["gpu"]:
+                why = "; ".join(DEVICE.get("notes") or []) or "no DirectX 12 graphics driver found"
+                raise FriendlyError("This PC's graphics chip couldn't be used (" + why[:220] + "). "
+                                    "Update the graphics driver, or set Splitting to 'Fastest available' "
+                                    "to use the processor instead.")
         if stems is None:
             update(job, engine="local")
             stems = (separate_mock if MOCK else separate_demucs)(job, wav, work / "out")
@@ -597,7 +608,8 @@ class SettingsRequest(BaseModel):
 def get_settings(x_access_key: str = Header(default="")):
     check_key(x_access_key)
     tok = cloud_token()
-    return {"engine": SETTINGS.get("engine", "auto"), "cloud_key": bool(tok),
+    return {"engine": SETTINGS.get("engine", "gpu"), "cloud_key": bool(tok),
+            "device_notes": DEVICE.get("notes") or [],
             "key_hint": ("…" + tok[-4:]) if len(tok) >= 4 else "", "device": DEVICE["name"], "gpu": DEVICE["gpu"]}
 
 
@@ -605,7 +617,7 @@ def get_settings(x_access_key: str = Header(default="")):
 def set_settings(req: SettingsRequest, x_access_key: str = Header(default="")):
     check_key(x_access_key)
     if req.engine is not None:
-        if req.engine not in ("auto", "local", "cloud"):
+        if req.engine not in ("auto", "local", "cloud", "gpu"):
             raise HTTPException(400, "Unknown splitting choice.")
         SETTINGS["engine"] = req.engine
     if req.mvsep_token is not None:

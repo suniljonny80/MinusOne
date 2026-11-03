@@ -161,8 +161,10 @@
       <p id="splitDevice">Checking this PC…</p>
       <fieldset class="choices">
         <legend class="sr">Where to split songs</legend>
-        <label class="choice"><input type="radio" name="engine" value="auto" checked>
+        <label class="choice"><input type="radio" name="engine" value="auto">
           <span><strong>Fastest available</strong><small>This PC's graphics chip (Intel, AMD or NVIDIA), otherwise its processor. Uses the cloud only if you add a key below.</small></span></label>
+        <label class="choice"><input type="radio" name="engine" value="gpu" checked>
+          <span><strong>Graphics chip only</strong><small>Never uses the processor. If the graphics chip can't be used, MinusOne stops and tells you why instead of running slowly.</small></span></label>
         <label class="choice"><input type="radio" name="engine" value="cloud">
           <span><strong>Always in the cloud</strong><small>Fast on any PC. Needs internet; songs are sent to MVSEP for splitting.</small></span></label>
         <label class="choice"><input type="radio" name="engine" value="local">
