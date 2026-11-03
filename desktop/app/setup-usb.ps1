@@ -139,6 +139,7 @@ $haveTorch = Test-Path (Join-Path $Runtime 'Lib\site-packages\torch')
 if (-not $haveTorch -and (Get-FreeGB) -lt 2.5) {
   Fail ("Not enough space: MinusOne needs about 2.5 GB free on " + $Root.Substring(0, 2) + ".")
 }
+New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
 
 function Get-File($url, $out) {
   for ($i = 1; $i -le 3; $i++) {
