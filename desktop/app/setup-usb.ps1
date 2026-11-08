@@ -186,6 +186,12 @@ New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
 # Fresh setup (no working Python on the USB yet) + room on this PC: build on the PC's disk, copy at the end.
 $Staged = $false
 $usbHasPython = Test-Path (Join-Path $UsbRuntime 'python.exe')
+if ($usbHasPython -and -not ((Test-TorchLoads) -and ($script:TorchVersion -like "$TorchPin*"))) {
+  # a half-finished or broken earlier setup: start over (the fast way) instead of repairing it on the USB
+  Say '  The earlier setup on this USB is incomplete, so it will be rebuilt.' 'Yellow'
+  Remove-Item -Recurse -Force $UsbRuntime -ErrorAction SilentlyContinue
+  $usbHasPython = Test-Path (Join-Path $UsbRuntime 'python.exe')
+}
 $sysDrive = $env:LOCALAPPDATA
 if (-not $usbHasPython -and $sysDrive -and ($sysDrive.Substring(0, 1) -ne $Root.Substring(0, 1)) -and ((Get-FreeGB $sysDrive) -ge 4)) {
   Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
@@ -250,8 +256,15 @@ try {
     $null = Install-Pkgs @('--upgrade', 'setuptools', 'wheel')
     if (-not (Install-Pkgs @('--no-build-isolation', 'proxy_tools'))) { Fail 'Installing the app window helper failed. Run setup again.' }
   }
-  if (-not (Install-Pkgs @('--upgrade', '-r', (Join-Path $App 'server\requirements.txt'), 'pywebview>=6', 'imageio-ffmpeg'))) {
+  # Pin PyTorch: Demucs accepts any PyTorch, and an upgrade would replace the DirectML-compatible 2.4.1
+  $pins = Join-Path $Tmp 'pins.txt'
+  Set-Content -Encoding ascii $pins "torch==$TorchPin`r`ntorchvision==$TorchVisionPin`r`nnumpy>=1.26,<2.3"
+  if (-not (Install-Pkgs @('--upgrade', '-c', $pins, '-r', (Join-Path $App 'server\requirements.txt'), 'pywebview>=6', 'imageio-ffmpeg'))) {
     Fail 'Installing packages failed. Check your internet connection and run setup again.'
+  }
+  if (-not ((Test-TorchLoads) -and ($script:TorchVersion -like "$TorchPin*"))) {
+    Say '  PyTorch was changed by another package; putting the right one back...' 'Yellow'
+    Install-UsbTorch
   }
 
   Install-CudaExtra
