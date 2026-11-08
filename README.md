@@ -48,9 +48,9 @@ and in your browser, so opening them again is instant.
 Run MinusOne from a USB stick on any Windows 10/11 PC, in its own app window.
 
 1. Download **`MinusOne-USB.zip`** (build it with `python desktop/build_usb.py`, or grab it from the
-   releases) and copy the `MinusOne` folder inside it to a USB stick (about 6 GB free for GPU speed on NVIDIA PCs, 2 GB for the processor-only version).
+   releases) and copy the `MinusOne` folder inside it to a USB stick (about 2.5 GB free; 6.5 GB more adds NVIDIA's CUDA engine).
 2. Double-click **`Set up USB.bat`** once, on a PC with internet. It puts a portable Python, the
-   splitting AI and everything else on the stick (about 2 GB, 10–30 minutes).
+   splitting AI and everything else on the stick (about 2.5 GB, usually 5–20 minutes).
 3. From then on, on any Windows PC: double-click **`MinusOne.exe`**.
 
 Your songs are saved on the USB, saved mixes go to its `Exports` folder, and uploading a song works
@@ -75,6 +75,15 @@ Intel UHD / Iris / Arc, AMD Radeon or NVIDIA. NVIDIA PCs also get NVIDIA's own C
 fastest) when the USB has room for it (about 6.5 GB free). Only a PC with no usable graphics chip
 falls back to the processor. How fast it is depends on the chip: a dedicated NVIDIA/AMD card splits a
 song in about a minute; integrated graphics are slower but still well ahead of the processor.
+
+**Why the first song takes a little longer:** when the app opens, it loads the splitting AI onto the
+graphics chip in the background and keeps it loaded, so every song after that starts splitting
+straight away. Temporary audio is written to the PC's own disk, not the slower USB stick.
+
+**Setup speed:** on a fresh USB, setup builds everything on the PC's disk first (fast), trims about
+half the files PyTorch ships with, and copies the result to the stick in one go. It downloads with
+[uv](https://github.com/astral-sh/uv) (several files at once) and falls back to pip. Nothing is left on
+the PC afterwards. The whole thing needs about 2.5 GB on the stick, so a 7.5 GB stick has plenty of room.
 
 An optional cloud splitter (MVSEP, free key) can be turned on under **Splitting**; it is off unless a
 key is added.

@@ -13,10 +13,24 @@ $Model = 'htdemucs_6s'
 
 $App = $PSScriptRoot                       # <usb>\MinusOne\app
 $Root = Split-Path -Parent $App            # <usb>\MinusOne
-$Runtime = Join-Path $Root 'runtime'
+$UsbRuntime = Join-Path $Root 'runtime'
+$Runtime = $UsbRuntime
 $Py = Join-Path $Runtime 'python.exe'
 $Models = Join-Path $Root 'models'
-$Tmp = Join-Path $Root 'setup-temp'
+
+# SPEED: a USB stick is very slow at writing thousands of small files, and PyTorch alone is ~15,000
+# files (half of them build-only headers). On a fresh setup everything is therefore downloaded and
+# installed on this PC's own disk first, trimmed, and then copied to the USB in one go. Downloads use
+# uv (several files at once) when it works, otherwise pip. Nothing is left on the PC afterwards.
+$Work = Join-Path $env:LOCALAPPDATA 'MinusOne-setup'
+$Tmp = Join-Path $Work 'temp'
+$Stage = Join-Path $Work 'runtime'
+$env:UV_CACHE_DIR = Join-Path $Work 'cache'
+$env:PIP_CACHE_DIR = Join-Path $Work 'pip-cache'
+$env:PIP_NO_COMPILE = '1'                  # don't write a .pyc for every file; Python makes the ones it needs
+$env:PIP_DISABLE_PIP_VERSION_CHECK = '1'
+$env:UV_LINK_MODE = 'copy'
+$Uv = $null
 
 # Run a program without letting its warning messages stop the script (PowerShell 5.1 quirk)
 function Invoke-Quiet([scriptblock]$Block) {
@@ -27,7 +41,7 @@ function Invoke-Quiet([scriptblock]$Block) {
 
 function Say($msg, $color = 'Gray') { Write-Host $msg -ForegroundColor $color }
 function Fail($msg) { Say ''; Say "  $msg" 'Red'; Say ''; exit 1 }
-function Step($n, $msg) { Say ''; Say "  [$n/5] $msg" 'Cyan' }
+function Step($n, $msg) { Say ''; Say "  [$n/6] $msg" 'Cyan' }
 
 # ---- PyTorch with DirectML: runs the AI on ANY graphics chip (Intel UHD/Iris/Arc, AMD Radeon, NVIDIA).
 # NVIDIA PCs additionally get the CUDA engine (fastest) when the USB has room for it (~5 GB).
@@ -54,9 +68,37 @@ function Test-TorchLoads {
   $script:TorchVersion = ($out | Select-Object -Last 1)
   return ($script:PyExit -eq 0)
 }
-function Get-FreeGB {
-  $d = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
+function Get-FreeGB([string]$Path = $Root) {
+  $d = Get-PSDrive -Name ($Path.Substring(0, 1)) -ErrorAction SilentlyContinue
   if ($d) { return [math]::Round($d.Free / 1GB, 1) } else { return 99 }
+}
+function Use-Runtime([string]$Dir) {
+  $script:Runtime = $Dir
+  $script:Py = Join-Path $Dir 'python.exe'
+}
+function Install-Pkgs([string[]]$PkgArgs) {
+  # uv first (parallel downloads, fast installs), pip if uv isn't available or fails
+  if ($script:Uv) {
+    & $script:Uv pip install --python $script:Py @PkgArgs
+    if ($LASTEXITCODE -eq 0) { return $true }
+    Say '  (fast installer had a problem, using pip for this step)' 'DarkGray'
+  }
+  $pipArgs = @($PkgArgs | ForEach-Object { $_ })
+  & $script:Py -m pip install --no-compile @pipArgs
+  return ($LASTEXITCODE -eq 0)
+}
+function Get-Uv {
+  # uv lives in the temp folder only; it is not copied to the USB
+  $uvDir = Join-Path $Tmp 'uv'
+  $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { & $Py -m pip install --quiet --target $uvDir uv 2>&1 | Out-Null } catch {}
+  $ErrorActionPreference = $old
+  $exe = Get-ChildItem $uvDir -Recurse -Filter 'uv.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($exe) {
+    $v = Invoke-Quiet { & $exe.FullName --version }
+    if ($LASTEXITCODE -eq 0) { $script:Uv = $exe.FullName; Say '  Using the fast installer (uv).' 'Gray'; return }
+  }
+  Say '  Using pip.' 'Gray'
 }
 function Remove-TorchCompletely([string]$Where = '') {
   # pip can leave files behind, and PyTorch loads every DLL in its folder, so delete the folders outright.
@@ -85,8 +127,8 @@ function Install-UsbTorch {
   Say '  Installing PyTorch with DirectML, so splitting uses whatever graphics chip the PC has...' 'Cyan'
   for ($attempt = 1; $attempt -le 2; $attempt++) {
     Remove-TorchCompletely
-    & $Py -m pip install --no-cache-dir "torch==$TorchPin" "torchvision==$TorchVisionPin" torch-directml "numpy>=1.26,<2.3"
-    if ($LASTEXITCODE -eq 0 -and (Test-TorchLoads)) {
+    $ok = Install-Pkgs @("torch==$TorchPin", "torchvision==$TorchVisionPin", 'torch-directml', 'numpy>=1.26,<2.3')
+    if ($ok -and (Test-TorchLoads)) {
       Remove-BuildOnlyFiles (Join-Path $Runtime 'Lib\site-packages\torch')
       Say "  PyTorch $TorchPin with DirectML installed." 'Green'
       return
@@ -115,8 +157,8 @@ function Install-CudaExtra {
   }
   Say '  NVIDIA card found: adding its extra-fast CUDA engine (about 3 GB download)...' 'Cyan'
   foreach ($cu in 'cu128', 'cu126', 'cu130') {
-    & $Py -m pip install --no-cache-dir --no-deps --upgrade --target $cuda torch --index-url "https://download.pytorch.org/whl/$cu"
-    if ($LASTEXITCODE -eq 0) {
+    $ok = Install-Pkgs @('--no-deps', '--upgrade', '--target', $cuda, 'torch', '--index-url', "https://download.pytorch.org/whl/$cu")
+    if ($ok) {
       Remove-BuildOnlyFiles (Join-Path $cuda 'torch')
       $r = (Invoke-Py @($runner, '--detect', 'cuda')) | Select-Object -Last 1
       if ($r -match '"kind": "cuda"') { Say "  CUDA engine ready ($cu)." 'Green'; return }
@@ -130,7 +172,7 @@ Say ''
 Say '  MinusOne USB setup' 'White'
 Say '  ------------------' 'DarkGray'
 Say "  Installing to: $Root"
-Say '  This downloads 2-5 GB and takes 10-40 minutes (USB sticks are slow to write).'
+Say '  This downloads about 1 GB and takes roughly 5-20 minutes, mostly copying to the USB.'
 Say '  Keep this window open until it says the USB is ready.'
 
 $drive = Get-PSDrive -Name ($Root.Substring(0, 1)) -ErrorAction SilentlyContinue
@@ -140,6 +182,17 @@ if (-not $haveTorch -and (Get-FreeGB) -lt 2.5) {
   Fail ("Not enough space: MinusOne needs about 2.5 GB free on " + $Root.Substring(0, 2) + ".")
 }
 New-Item -ItemType Directory -Force $Tmp, $Models | Out-Null
+
+# Fresh setup (no working Python on the USB yet) + room on this PC: build on the PC's disk, copy at the end.
+$Staged = $false
+$usbHasPython = Test-Path (Join-Path $UsbRuntime 'python.exe')
+$sysDrive = $env:LOCALAPPDATA
+if (-not $usbHasPython -and $sysDrive -and ($sysDrive.Substring(0, 1) -ne $Root.Substring(0, 1)) -and ((Get-FreeGB $sysDrive) -ge 4)) {
+  Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
+  Use-Runtime $Stage
+  $Staged = $true
+  Say '  Fast mode: building on this PC first, then copying to the USB in one go.' 'Gray'
+}
 
 function Get-File($url, $out) {
   for ($i = 1; $i -le 3; $i++) {
@@ -174,6 +227,7 @@ try {
     & $Py $getpip --no-warn-script-location --quiet
     if ($LASTEXITCODE -ne 0) { Fail 'Installing pip failed.' }
   }
+  Get-Uv
 
   # -------------------------------------------------------------- 3. packages
   Step 3 'MinusOne packages (PyTorch, Demucs, yt-dlp, app window). This is the long part...'
@@ -182,8 +236,7 @@ try {
 
   # PyTorch needs Microsoft's Visual C++ runtime, which many PCs don't have. Put a copy on the USB
   # next to python.exe BEFORE installing PyTorch, so it works on any PC (Microsoft allows this).
-  & $Py -m pip install --upgrade --no-cache-dir msvc-runtime
-  if ($LASTEXITCODE -ne 0) { Fail 'Installing the Visual C++ runtime failed. Run setup again.' }
+  if (-not (Install-Pkgs @('--upgrade', 'msvc-runtime'))) { Fail 'Installing the Visual C++ runtime failed. Run setup again.' }
   foreach ($dll in 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcruntime140_threads.dll') {
     $src = Join-Path $Runtime "Scripts\$dll"
     if (Test-Path $src) { Copy-Item $src (Join-Path $Runtime $dll) -Force }
@@ -193,11 +246,13 @@ try {
 
   # proxy_tools (used by the app window) only ships as source; the portable Python can't build it
   # in pip's isolated mode, so install the build tools first and build it directly.
-  & $Py -m pip install --upgrade --no-cache-dir setuptools wheel
-  & $Py -m pip install --no-cache-dir --no-build-isolation proxy_tools
-  if ($LASTEXITCODE -ne 0) { Fail 'Installing the app window helper failed. Run setup again.' }
-  & $Py -m pip install --upgrade --no-cache-dir -r (Join-Path $App 'server\requirements.txt') 'pywebview>=6' imageio-ffmpeg
-  if ($LASTEXITCODE -ne 0) { Fail 'Installing packages failed. Check your internet connection and run setup again.' }
+  if (-not (Test-Path (Join-Path $Runtime 'Lib\site-packages\proxy_tools'))) {
+    $null = Install-Pkgs @('--upgrade', 'setuptools', 'wheel')
+    if (-not (Install-Pkgs @('--no-build-isolation', 'proxy_tools'))) { Fail 'Installing the app window helper failed. Run setup again.' }
+  }
+  if (-not (Install-Pkgs @('--upgrade', '-r', (Join-Path $App 'server\requirements.txt'), 'pywebview>=6', 'imageio-ffmpeg'))) {
+    Fail 'Installing packages failed. Check your internet connection and run setup again.'
+  }
 
   Install-CudaExtra
 
@@ -205,11 +260,39 @@ try {
   Step 4 'ffmpeg (audio converter)'
   $bin = Join-Path $Runtime 'bin'
   New-Item -ItemType Directory -Force $bin | Out-Null
-  & $Py -c "import imageio_ffmpeg, shutil, sys; shutil.copy(imageio_ffmpeg.get_ffmpeg_exe(), sys.argv[1])" (Join-Path $bin 'ffmpeg.exe')
-  if ($LASTEXITCODE -ne 0) { Fail 'Setting up ffmpeg failed.' }
+  if (-not (Test-Path (Join-Path $bin 'ffmpeg.exe'))) {
+    & $Py -c "import imageio_ffmpeg, shutil, sys; shutil.copy(imageio_ffmpeg.get_ffmpeg_exe(), sys.argv[1])" (Join-Path $bin 'ffmpeg.exe')
+    if ($LASTEXITCODE -ne 0) { Fail 'Setting up ffmpeg failed.' }
+  }
+  # imageio-ffmpeg's own copy isn't needed any more (ffmpeg.exe is in runtime\bin): saves ~80 MB on the USB
+  Remove-Item -Recurse -Force (Join-Path $Runtime 'Lib\site-packages\imageio_ffmpeg\binaries') -ErrorAction SilentlyContinue
 
-  # -------------------------------------------------------------- 5. AI model
-  Step 5 'Instrument-splitting AI model (about 80 MB)'
+  # -------------------------------------------------------------- 5. copy to the USB
+  Step 5 'Copying to the USB'
+  if ($Staged) {
+    # Load everything the app uses once on the fast disk, so Python saves the compiled files the app
+    # needs (makes the first start from the USB faster), then copy the whole folder in one go.
+    $null = Invoke-Py @('-c', "import fastapi, uvicorn, yt_dlp, webview, demucs.api, demucs.separate, numpy, torch, torch_directml, requests, multipart")
+    $mb = [math]::Round(((Get-ChildItem $Stage -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB)
+    $free = Get-FreeGB
+    if (($mb / 1024) -gt ($free - 0.2)) { Fail "Not enough space on the USB: MinusOne needs $([math]::Round($mb / 1024, 1)) GB and $free GB is free." }
+    Say "  Copying $mb MB to the USB. USB sticks are slow to write, so this is the longest step..." 'Cyan'
+    Remove-Item -Recurse -Force $UsbRuntime -ErrorAction SilentlyContinue
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & robocopy $Stage $UsbRuntime /E /MT:8 /R:2 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+    $rc = $LASTEXITCODE
+    $ErrorActionPreference = $old
+    if ($rc -ge 8) { Fail "Copying to the USB failed (robocopy code $rc). Check the USB isn't full or write-protected, then run setup again." }
+    Use-Runtime $UsbRuntime
+    if (-not (Test-TorchLoads)) { Say "    $script:TorchError" 'DarkGray'; Fail 'The copy on the USB does not work. Run setup again.' }
+    Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
+    Say '  Copied.' 'Green'
+  } else {
+    Say '  Installed straight onto the USB.' 'Gray'
+  }
+
+  # -------------------------------------------------------------- 6. AI model
+  Step 6 'Instrument-splitting AI model (about 80 MB)'
   if (-not (Test-TorchLoads)) { Install-UsbTorch }
   $env:HF_HOME = Join-Path $Models 'hf'
   $env:TORCH_HOME = Join-Path $Models 'torch'
@@ -231,6 +314,8 @@ try {
 finally {
   Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }
+# done: remove the build folder and download cache from this PC
+Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 
 Say ''
 Say '  The USB is ready.' 'Green'

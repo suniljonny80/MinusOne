@@ -49,7 +49,7 @@ ACCESS_KEY = os.environ.get("ACCESS_KEY", "").strip()
 MOCK = os.environ.get("MOCK_SEPARATOR", "") == "1"
 DATA = Path(os.environ.get("DATA_DIR") or (Path(__file__).resolve().parent / "data"))
 SONGS = DATA / "songs"
-WORK = DATA / "work"
+WORK = Path(os.environ.get("WORK_DIR") or (DATA / "work"))   # temp files: on the fast internal disk if set
 for d in (SONGS, WORK):
     d.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +72,10 @@ DEVICE = {"name": "checking", "gpu": False, "kind": "cpu"}
 
 
 RUNNER = Path(__file__).resolve().parent / "split_runner.py"
+# pythonw.exe (the USB app) has no usable stdout; the splitter talks over pipes, so it runs under python.exe
+_pyexe = Path(sys.executable)
+PY = str(_pyexe.with_name("python.exe")) if _pyexe.name.lower() == "pythonw.exe" and \
+    _pyexe.with_name("python.exe").is_file() else sys.executable
 
 
 def detect_device():
@@ -83,7 +87,7 @@ def detect_device():
     notes = []
     for kind in ("cuda", "dml"):
         try:
-            out = subprocess.run([sys.executable, str(RUNNER), "--detect", kind], capture_output=True,
+            out = subprocess.run([PY, str(RUNNER), "--detect", kind], capture_output=True,
                                  text=True, timeout=240).stdout.strip().splitlines()
             info = json.loads(out[-1]) if out else {}
         except Exception as e:
@@ -99,7 +103,126 @@ def detect_device():
     print("Demucs device:", DEVICE, flush=True)
 
 
-threading.Thread(target=detect_device, daemon=True).start()
+class WarmWorker:
+    """One long-lived `split_runner.py --serve` process: it picks the device, loads PyTorch and the model
+    once (in the background, as soon as the server starts) and then splits every song without loading
+    anything again. If it can't start, the server falls back to one process per song."""
+
+    def __init__(self):
+        self.proc = None
+        self.ready = threading.Event()
+        self.failed = False
+        self.lines = deque()
+        self.got = threading.Condition()
+        self.tail = deque(maxlen=40)
+        self.was_ready = False
+        self.restarts = 0
+
+    def restart(self):
+        """Start again after the worker stopped (e.g. the PC ran out of memory). Only if it worked before."""
+        if not self.was_ready or self.restarts >= 2:
+            return False
+        self.restarts += 1
+        self.stop()
+        self.ready.clear()
+        self.failed = False
+        self.start(no_cuda=DEVICE.get("kind") != "cuda")
+        self.ready.wait(600)
+        return self.usable()
+
+    def start(self, no_cuda=False):
+        threads = os.cpu_count() or 2
+        env = dict(os.environ, OMP_NUM_THREADS=str(threads), MKL_NUM_THREADS=str(threads),
+                   PYTHONUNBUFFERED="1")
+        cmd = [PY, str(RUNNER), "--serve", MODEL] + (["--no-cuda"] if no_cuda else [])
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, env=env)
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        proc = self.proc
+        for raw in proc.stdout:
+            line = raw.decode(errors="ignore").rstrip()
+            if not line.startswith("@@"):
+                if line.strip():
+                    self.tail.append(line)
+                continue
+            try:
+                msg = json.loads(line[2:])
+            except ValueError:
+                continue
+            if msg.get("retry_without_cuda"):
+                proc.wait()
+                self.start(no_cuda=True)
+                return
+            if "ready" in msg:
+                info = msg["ready"]
+                DEVICE.update(name=info.get("name") or info["kind"], kind=info["kind"],
+                              gpu=info["kind"] in ("cuda", "dml"), index=info.get("index"),
+                              notes=info.get("notes") or [], warm=True)
+                print("Demucs device (warm):", DEVICE, flush=True)
+                self.was_ready = True
+                self.ready.set()
+                continue
+            with self.got:
+                self.lines.append(msg)
+                self.got.notify_all()
+        # process ended
+        self.failed = True
+        with self.got:
+            self.got.notify_all()
+        if not self.ready.is_set():
+            print("warm worker didn't start:\n" + "\n".join(self.tail), file=sys.stderr, flush=True)
+            self.ready.set()
+
+    def usable(self):
+        return self.ready.is_set() and not self.failed and self.proc and self.proc.poll() is None
+
+    def split(self, job, wav, outdir, overlap, jobs_n):
+        with self.got:
+            self.lines.clear()
+        req = {"wav": str(wav), "out": str(outdir), "overlap": overlap, "jobs": jobs_n, "bitrate": 256}
+        self.proc.stdin.write((json.dumps(req) + "\n").encode())
+        self.proc.stdin.flush()
+        while True:
+            with self.got:
+                while not self.lines and not self.failed:
+                    self.got.wait(1)
+                if not self.lines:
+                    raise RuntimeError("Splitter stopped:\n" + "\n".join(list(self.tail)[-12:]))
+                msg = self.lines.popleft()
+            if "progress" in msg:
+                update(job, progress=min(99, int(msg["progress"])))
+            elif "done" in msg:
+                return {k: Path(v) for k, v in msg["done"].items()}
+            elif "error" in msg:
+                raise RuntimeError(msg["error"])
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+
+
+WARM = WarmWorker()
+
+
+def start_device():
+    if MOCK or os.environ.get("MINUSONE_NO_WARM") == "1":
+        WARM.failed = True
+        WARM.ready.set()
+        return detect_device()
+    try:
+        WARM.start()
+    except Exception as e:
+        print("warm worker failed:", e, flush=True)
+        WARM.failed = True
+        WARM.ready.set()
+    WARM.ready.wait(600)
+    if not WARM.usable():
+        detect_device()                        # old way: separate checks, one process per song
+
+
+threading.Thread(target=start_device, daemon=True).start()
 
 # ---------------------------------------------------------------- jobs
 
@@ -255,9 +378,36 @@ def to_wav(src, dst, limit=MAX_SECONDS):
         return None
 
 
-def separate_demucs(job, wav, outdir):
+def demucs_tuning():
+    """(overlap, parallel chunks) for this device. Less overlap between chunks = fewer chunks to run."""
     kind = DEVICE.get("kind", "cpu")
-    cmd = [sys.executable, str(RUNNER), "--accel", kind, "--", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
+    if kind == "cuda":
+        return 0.25, 0
+    if kind == "dml":
+        return 0.15, 0                         # integrated GPUs: a little less overlap, ~10% faster
+    return 0.1, (2 if (os.cpu_count() or 1) >= 4 else 0)   # CPU: least overlap, two chunks at once
+
+
+def separate_demucs(job, wav, outdir):
+    if not WARM.ready.is_set():
+        update(job, stage="Getting the splitter ready (first song only)")
+        WARM.ready.wait(600)
+        update(job, stage="Splitting into instruments")
+    if not WARM.usable() and WARM.was_ready:
+        update(job, stage="Restarting the splitter")
+        WARM.restart()
+        update(job, stage="Splitting into instruments")
+    if WARM.usable():
+        try:
+            overlap, jobs_n = demucs_tuning()
+            return WARM.split(job, wav, outdir / "warm", overlap, jobs_n)
+        except Exception as e:
+            print("warm split failed, retrying the old way:", e, flush=True)
+            WARM.stop()
+            WARM.failed = True
+            update(job, progress=0)
+    kind = DEVICE.get("kind", "cpu")
+    cmd = [PY, str(RUNNER), "--accel", kind, "--", "-n", MODEL, "--mp3", "--mp3-bitrate", "256",
            "--filename", "{stem}.{ext}", "-o", str(outdir), str(wav)]
     if kind == "dml":
         cmd[5:5] = ["--overlap", "0.15"]         # integrated GPUs: a little less overlap, ~10% faster
@@ -503,8 +653,12 @@ def process(job):
                 print("cloud split failed, using this PC:", e, flush=True)
                 update(job, engine="local", progress=0, cloud_error=str(e),
                        stage="Cloud splitter unavailable (" + str(e)[:80] + "). Splitting on this PC instead")
-        if stems is None and engine == "gpu":
-            for _ in range(240):                     # device check may still be running
+        if stems is None and engine == "gpu" and not MOCK:
+            if not WARM.ready.is_set():              # splitter still loading (first song after start)
+                update(job, stage="Getting the splitter ready (first song only)")
+                WARM.ready.wait(600)
+                update(job, stage="Splitting into instruments")
+            for _ in range(240):                     # old-style device check may still be running
                 if DEVICE["name"] != "checking":
                     break
                 time.sleep(0.5)

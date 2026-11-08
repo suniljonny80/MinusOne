@@ -62,6 +62,11 @@ if os.name == "nt":
 os.environ["PATH"] = os.pathsep.join([str(RUNTIME / "Scripts"), str(RUNTIME / "bin"), str(RUNTIME),
                                       os.environ.get("PATH", "")])
 os.environ.setdefault("DATA_DIR", str(DATA / "server"))
+# Temporary audio (the downloaded song, the 50 MB WAV, the stems while they're made) goes on the PC's
+# own disk, which is many times faster than a USB stick; only the finished stems are copied to the USB.
+_tmp = os.environ.get("TEMP") or os.environ.get("TMP")
+if _tmp and Path(_tmp).anchor.lower() != Path(__file__).resolve().anchor.lower():
+    os.environ.setdefault("WORK_DIR", str(Path(_tmp) / "MinusOne-work"))
 os.environ.setdefault("HF_HOME", str(MODELS / "hf"))
 os.environ.setdefault("TORCH_HOME", str(MODELS / "torch"))
 os.environ.setdefault("DEMUCS_MODEL", "htdemucs_6s")

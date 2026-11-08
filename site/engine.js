@@ -53,9 +53,16 @@ export class Engine extends EventTarget {
     this.peaks = [];
     this.duration = 0;
     this.time = 0;
+    // decode a few stems at once (the browser decodes on other CPU cores), but not all six, so the
+    // memory use stays reasonable on small PCs and phones
+    const AHEAD = 3, pending = [];
+    const decode = (i) => stems[i].blob.arrayBuffer().then((ab) => this.ctx.decodeAudioData(ab));
+    for (let i = 0; i < Math.min(AHEAD, stems.length); i++) pending[i] = decode(i);
     for (let i = 0; i < stems.length; i++) {
       onProgress(i / stems.length, stems[i].name);
-      const buf = await this.ctx.decodeAudioData(await stems[i].blob.arrayBuffer());
+      const buf = await pending[i];
+      pending[i] = null;
+      if (i + AHEAD < stems.length) pending[i + AHEAD] = decode(i + AHEAD);
       const L = buf.getChannelData(0);
       const R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
       this.peaks[i] = peaksOf(L, R);

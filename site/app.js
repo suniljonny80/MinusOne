@@ -443,14 +443,14 @@ async function pollJob(s) {
 
 async function downloadStems(s) {
   jobUI({ title: s.title, step: 'load', pct: 0, note: 'Downloading the stems to this device' });
-  const stems = [];
-  for (let i = 0; i < s.stems.length; i++) {
-    const st = s.stems[i];
+  let got = 0;                                   // all stems at once: much faster over a tunnel
+  const stems = await Promise.all(s.stems.map(async (st) => {
     const res = await fetch(server.url + st.url, { headers: server.headers() });
     if (!res.ok) throw new Error(`Couldn't download the ${st.name} stem (${res.status}).`);
-    stems.push({ name: st.name, blob: await res.blob() });
-    jobUI({ step: 'load', pct: ((i + 1) / s.stems.length) * 100 });
-  }
+    const blob = await res.blob();
+    jobUI({ step: 'load', pct: (++got / s.stems.length) * 100 });
+    return { name: st.name, blob };
+  }));
   const rec = { id: s.id, title: s.title || 'Untitled song', artist: s.artist || '', duration: s.duration,
                 youtube_id: s.youtube_id || null, source: s.source, stems, added: Date.now(), opened: Date.now() };
   try { await db.put(rec); } catch { toast("This browser won't let MinusOne save songs, so it will only last this session."); }
